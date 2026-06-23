@@ -1,0 +1,128 @@
+:root {
+  --bg: #0f1722;
+  --panel: #16202e;
+  --panel-2: #1c2940;
+  --border: #27374d;
+  --text: #e8eef6;
+  --muted: #93a4ba;
+  --accent: #3da9fc;
+  --accent-2: #00d4a0;
+  --warn: #ffb454;
+  --bad: #ff6b6b;
+  --good: #43d39e;
+  --wellabe: #3da9fc;
+  --big6: #ff8a5c;
+  --shadow: 0 6px 24px rgba(0,0,0,.35);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--accent); }
+
+/* Header */
+header.app {
+  padding: 18px 26px;
+  background: linear-gradient(180deg, #16243a, #111a27);
+  border-bottom: 1px solid var(--border);
+}
+header.app h1 { margin: 0; font-size: 20px; letter-spacing: .2px; }
+header.app .sub { color: var(--muted); font-size: 12.5px; margin-top: 4px; }
+header.app .meta { color: var(--muted); font-size: 11.5px; margin-top: 6px; }
+
+/* Tabs */
+nav.tabs {
+  display: flex; gap: 4px; padding: 0 18px;
+  background: var(--panel); border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 20; flex-wrap: wrap;
+}
+nav.tabs button {
+  background: none; border: none; color: var(--muted);
+  padding: 13px 16px; font-size: 13.5px; cursor: pointer;
+  border-bottom: 2.5px solid transparent; font-weight: 600;
+}
+nav.tabs button:hover { color: var(--text); }
+nav.tabs button.active { color: var(--text); border-bottom-color: var(--accent); }
+
+main { padding: 22px 26px 60px; max-width: 1320px; margin: 0 auto; }
+.tabpane { display: none; }
+.tabpane.active { display: block; animation: fade .2s ease; }
+@keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; } }
+
+h2.section { font-size: 16px; margin: 4px 0 14px; }
+p.lead { color: var(--muted); max-width: 900px; margin: 0 0 18px; }
+
+/* KPI cards */
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; margin-bottom: 22px; }
+.kpi {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  padding: 16px 18px; box-shadow: var(--shadow);
+}
+.kpi .label { color: var(--muted); font-size: 11.5px; text-transform: uppercase; letter-spacing: .6px; }
+.kpi .value { font-size: 26px; font-weight: 700; margin-top: 6px; }
+.kpi .delta { font-size: 12px; margin-top: 4px; color: var(--muted); }
+.kpi .value.good { color: var(--good); }
+.kpi .value.bad { color: var(--bad); }
+.kpi .value.warn { color: var(--warn); }
+
+/* Panels & grid */
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.grid2-2-1 { display: grid; grid-template-columns: 2fr 1fr; gap: 18px; }
+@media (max-width: 960px) { .grid2, .grid2-2-1 { grid-template-columns: 1fr; } }
+.panel {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  padding: 16px 18px; box-shadow: var(--shadow); margin-bottom: 18px;
+}
+.panel h3 { margin: 0 0 12px; font-size: 14px; }
+.panel .hint { color: var(--muted); font-size: 12px; margin: -6px 0 12px; }
+.chart-wrap { position: relative; height: 340px; }
+.chart-wrap.tall { height: 460px; }
+.chart-wrap.short { height: 220px; }
+
+/* Tables */
+table.data { width: 100%; border-collapse: collapse; font-size: 12.8px; }
+table.data th, table.data td { padding: 8px 10px; text-align: right; border-bottom: 1px solid var(--border); white-space: nowrap; }
+table.data th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: 10.5px; letter-spacing: .5px; cursor: pointer; user-select: none; position: sticky; top: 0; background: var(--panel); }
+table.data th.left, table.data td.left { text-align: left; }
+table.data tbody tr:hover { background: var(--panel-2); }
+table.data td.pos { color: var(--good); }
+table.data td.neg { color: var(--bad); }
+table.data tr.clickable { cursor: pointer; }
+table.data tr.selected { background: rgba(61,169,252,.12); }
+.table-scroll { max-height: 560px; overflow: auto; border: 1px solid var(--border); border-radius: 10px; }
+.bar-cell { position: relative; }
+.bar-cell .bar { position: absolute; left: 0; top: 0; bottom: 0; background: rgba(61,169,252,.18); z-index: 0; }
+.bar-cell span { position: relative; z-index: 1; }
+
+/* Controls */
+.controls { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end; margin-bottom: 16px; }
+.field { display: flex; flex-direction: column; gap: 5px; }
+.field label { font-size: 11.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
+.field input, .field select {
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 10px; font-size: 13px; min-width: 120px;
+}
+.field input[type=range] { padding: 0; min-width: 180px; }
+.field .rangeval { font-size: 13px; color: var(--accent); font-weight: 600; }
+.pill { background: var(--panel-2); border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; font-size: 11.5px; color: var(--muted); }
+.btn {
+  background: var(--accent); color: #07121f; border: none; border-radius: 8px;
+  padding: 9px 14px; font-size: 13px; font-weight: 700; cursor: pointer;
+}
+.btn.secondary { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); }
+.btn:hover { filter: brightness(1.08); }
+
+/* Inputs tab elastic table */
+table.elastic { border-collapse: collapse; font-size: 13px; }
+table.elastic th, table.elastic td { padding: 7px 12px; border-bottom: 1px solid var(--border); text-align: left; }
+table.elastic input { width: 80px; }
+.swatch { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 6px; vertical-align: middle; }
+.tag-sell { color: var(--accent-2); font-size: 10px; border: 1px solid var(--accent-2); border-radius: 4px; padding: 1px 5px; margin-left: 6px; }
+.note { background: var(--panel-2); border-left: 3px solid var(--accent); padding: 10px 14px; border-radius: 6px; color: var(--muted); font-size: 12.5px; margin: 14px 0; }
+.muted { color: var(--muted); }
+.right { text-align: right; }
+.sticky-bar { position: sticky; bottom: 0; }

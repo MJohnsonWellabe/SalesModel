@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Wellabe Rate Competitiveness &amp; 2027 Sales Impact</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%233da9fc'/%3E%3C/svg%3E" />
+<link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+<header class="app">
+  <h1>Wellabe Rate Competitiveness &amp; 2027 Sales Impact</h1>
+  <div class="sub">How far must our Med&nbsp;Supp (Plan&nbsp;G) rates rise to reach the Big&nbsp;6 ballpark after their rerates &mdash; and what that does to 2027 sales.</div>
+  <div class="meta" id="metaLine">Loading data&hellip;</div>
+</header>
+
+<nav class="tabs" id="tabs">
+  <button data-tab="summary" class="active">Executive Summary</button>
+  <button data-tab="rates">Rate Competitiveness</button>
+  <button data-tab="increases">Required Rate Increases</button>
+  <button data-tab="sales">2027 Sales Projection</button>
+  <button data-tab="inputs">Assumptions &amp; Inputs</button>
+</nav>
+
+<main>
+  <!-- ===================== SUMMARY ===================== -->
+  <section class="tabpane active" id="tab-summary">
+    <h2 class="section">Executive Summary</h2>
+    <p class="lead">
+      The Big&nbsp;6 carriers are assumed to take a <strong id="sumRerate">15%</strong> rerate over the next 6&ndash;9 months.
+      To stay in the ballpark, Wellabe targets <strong id="sumTarget">5% below</strong> their post-rerate average.
+      Because we sit well below the Big&nbsp;6 today, closing that gap requires sizeable increases &mdash; which reduce 2027 sales.
+    </p>
+    <div class="kpis" id="summaryKpis"></div>
+    <div class="grid2-2-1">
+      <div class="panel">
+        <h3>2026 baseline vs. 2027 projected sales by state</h3>
+        <div class="hint">Baseline = 2026 projection carried into 2027 (no growth). Adjusted = after rate-driven sales reduction.</div>
+        <div class="chart-wrap tall"><canvas id="chartSummarySales"></canvas></div>
+      </div>
+      <div class="panel">
+        <h3>Where we stand today</h3>
+        <div class="hint">Wellabe rate as % of the Big&nbsp;6 average (today). Below 100% = we are cheaper.</div>
+        <div class="chart-wrap tall"><canvas id="chartSummaryGap"></canvas></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== RATES ===================== -->
+  <section class="tabpane" id="tab-rates">
+    <h2 class="section">Rate Competitiveness &mdash; where we stack up vs. the Big&nbsp;6</h2>
+    <p class="lead">Plan&nbsp;G monthly premiums. Pick a state and drill into age &amp; gender, then a specific zip&ndash;3 cell.
+      The right chart shows Wellabe against each Big&nbsp;6 carrier group (today and after their assumed rerate).</p>
+    <div class="controls">
+      <div class="field"><label>State</label><select id="rateState"></select></div>
+      <div class="field"><label>Age</label><select id="rateAge"></select></div>
+      <div class="field"><label>Gender</label><select id="rateGender"></select></div>
+      <div class="field"><label>&nbsp;</label><span class="pill" id="rateCellCount"></span></div>
+    </div>
+    <div class="grid2-2-1">
+      <div class="panel">
+        <h3>Zip&ndash;3 detail <span class="muted" id="rateTableTitle"></span></h3>
+        <div class="hint">Click a row to chart that cell. Req%&nbsp;= increase Wellabe needs to reach target.</div>
+        <div class="table-scroll"><table class="data" id="rateTable"></table></div>
+      </div>
+      <div class="panel">
+        <h3 id="rateChartTitle">Carrier stack-up</h3>
+        <div class="chart-wrap tall"><canvas id="chartRateStack"></canvas></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== INCREASES ===================== -->
+  <section class="tabpane" id="tab-increases">
+    <h2 class="section">Required Rate Increases by State</h2>
+    <p class="lead">For each state, the average increase Wellabe must take so its Plan&nbsp;G rate reaches the target
+      (Big&nbsp;6 post-rerate benchmark, offset by the target position). Driven live by the assumptions.</p>
+    <div class="kpis" id="incKpis"></div>
+    <div class="grid2">
+      <div class="panel">
+        <h3>Required increase by state</h3>
+        <div class="hint">States Wellabe actively sells in are marked. Sorted by required increase.</div>
+        <div class="chart-wrap tall"><canvas id="chartInc"></canvas></div>
+      </div>
+      <div class="panel">
+        <h3>Detail</h3>
+        <div class="hint">Today's gap, the post-rerate target, the required increase, and the resulting sales reduction.</div>
+        <div class="table-scroll"><table class="data" id="incTable"></table></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== SALES ===================== -->
+  <section class="tabpane" id="tab-sales">
+    <h2 class="section">2027 Sales Projection</h2>
+    <p class="lead">2026 projected sales (from the sales-tracking model, $187.4M) carried into 2027 with
+      <strong id="salesGrowthLbl">0%</strong> growth, then reduced by the rate-driven elasticity. Expand a state for the monthly view.</p>
+    <div class="kpis" id="salesKpis"></div>
+    <div class="panel">
+      <h3>Annual: baseline vs. adjusted 2027 by state</h3>
+      <div class="chart-wrap tall"><canvas id="chartSalesByState"></canvas></div>
+    </div>
+    <div class="grid2">
+      <div class="panel">
+        <h3>Total sales waterfall</h3>
+        <div class="hint">From the 2027 baseline down to the adjusted projection, attributing the loss to each state.</div>
+        <div class="chart-wrap tall"><canvas id="chartSalesWaterfall"></canvas></div>
+      </div>
+      <div class="panel">
+        <h3>Monthly shape</h3>
+        <div class="hint">Select a state to see its 2027 baseline vs. adjusted by month.</div>
+        <div class="controls"><div class="field"><label>State</label><select id="salesMonthState"></select></div></div>
+        <div class="chart-wrap"><canvas id="chartSalesMonthly"></canvas></div>
+      </div>
+    </div>
+    <div class="panel">
+      <h3>State detail</h3>
+      <div class="table-scroll"><table class="data" id="salesTable"></table></div>
+    </div>
+  </section>
+
+  <!-- ===================== INPUTS ===================== -->
+  <section class="tabpane" id="tab-inputs">
+    <h2 class="section">Assumptions &amp; Inputs</h2>
+    <p class="lead">Everything below recalculates the whole app instantly. Settings persist in your browser.</p>
+    <div class="grid2">
+      <div class="panel">
+        <h3>Rate targeting</h3>
+        <div class="field" style="margin-bottom:16px">
+          <label>Big&nbsp;6 rerate (rates rise this much before we act)</label>
+          <input type="range" id="inRerate" min="0" max="0.40" step="0.01" />
+          <span class="rangeval" id="inRerateVal"></span>
+        </div>
+        <div class="field" style="margin-bottom:16px">
+          <label>Big&nbsp;6 benchmark statistic</label>
+          <select id="inBenchStat">
+            <option value="avg">Average of the Big&nbsp;6 groups</option>
+            <option value="median">Median of the Big&nbsp;6 groups</option>
+            <option value="min">Cheapest Big&nbsp;6 group</option>
+          </select>
+        </div>
+        <div class="field" style="margin-bottom:16px">
+          <label>Target position vs. Big&nbsp;6 post-rerate benchmark</label>
+          <input type="range" id="inOffset" min="-0.25" max="0.10" step="0.01" />
+          <span class="rangeval" id="inOffsetVal"></span>
+        </div>
+        <div class="note">Target rate = Big&nbsp;6 benchmark &times; (1 + rerate) &times; (1 + offset).
+          Required increase is floored at 0% (we never assume cutting rates).</div>
+      </div>
+      <div class="panel">
+        <h3>Sales projection</h3>
+        <div class="field" style="margin-bottom:16px">
+          <label>2027 growth from 2026 baseline</label>
+          <input type="range" id="inGrowth" min="-0.10" max="0.15" step="0.01" />
+          <span class="rangeval" id="inGrowthVal"></span>
+        </div>
+        <h3 style="margin-top:6px">Elasticity &mdash; rate increase &rarr; sales reduction</h3>
+        <div class="hint">A required increase of at least the threshold reduces that state's sales by the reduction. Editable.</div>
+        <table class="elastic" id="elasticTable"></table>
+        <div style="margin-top:12px"><button class="btn secondary" id="addTier">+ Add tier</button></div>
+      </div>
+    </div>
+    <div class="panel">
+      <h3>Per-state sales-reduction overrides (optional)</h3>
+      <div class="hint">Leave blank to use the elasticity curve. Enter a % to force a specific 2027 reduction for a state.</div>
+      <div id="overrideGrid" class="controls"></div>
+    </div>
+    <div class="controls sticky-bar">
+      <button class="btn secondary" id="resetBtn">Reset to defaults</button>
+    </div>
+  </section>
+</main>
+
+<script src="js/chart.umd.min.js"></script>
+<script src="js/charts.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
