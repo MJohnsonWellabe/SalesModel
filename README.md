@@ -32,14 +32,21 @@ requiredIncrease = max(0, targetRate / wellabeRate − 1)  # never assume cuttin
 ```
 
 `wellabeRate` is the lowest of the three Medico legal entities in the cell. Cells roll up to a state-average
-required increase, which drives a tiered **elasticity** table (increase → sales reduction; defaults
-5–10%→0%, 10–15%→10%, 15–20%→20%, 20–30%→30%, 30–40%→40%, >40%→50%). Finally:
+required increase, which drives a tiered **elasticity** table. By default the elasticity reduces the **policy
+count** while premium per remaining policy rises with the rate increase, so the net premium impact is smaller
+than the count drop (and can even be positive where the rate increase outweighs the count loss):
 
 ```
-sales2027(state) = baseline2026(state) × (1 + growth) × (1 − reduction)    # growth default 0%
+# "count" mode (default)  — elasticity cuts policy count; premium/policy rises with the increase
+sales2027(state) = baseline2026(state) × (1 + growth) × (1 − countReduction) × (1 + requiredIncrease)
+# "premium" mode          — elasticity cuts premium dollars directly
+sales2027(state) = baseline2026(state) × (1 + growth) × (1 − reduction)
 ```
 
-All inputs are adjustable in the app; per-state reduction overrides are supported.
+Default count-reduction tiers: 5–10%→5%, 10–15%→20%, 15–20%→35%, 20–30%→50%, 30–40%→65%, >40%→80%
+(growth default 0%). The reduction (and premium uplift) apply only to **2027 months on/after each state's
+rate-increase start date**, weighted by the seasonal monthly shape. All inputs are adjustable; each state has
+a take/skip toggle, a start date, and an optional count-reduction override.
 
 ## Data sources
 

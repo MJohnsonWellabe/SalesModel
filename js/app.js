@@ -2,7 +2,7 @@
 (() => {
   'use strict';
 
-  const LS_KEY = 'wellabe_rate_model_v1';
+  const LS_KEY = 'wellabe_rate_model_v2'; // bumped: count-based reduction + higher elasticity defaults
   const DEFAULTS = {
     rerate: 0.15,        // Big 6 rerate before we act
     benchStat: 'avg',    // avg | median | min  (over the six Big-6 group rates)
@@ -12,15 +12,17 @@
     defaultStart: '2027-01-01', // default rate-increase start date (per-state overridable)
     stateOn: {},         // state -> bool; absent => true (take the increase)
     stateStart: {},      // state -> 'YYYY-MM-DD'; absent => defaultStart
-    elastic: [           // {t: required-increase threshold, r: sales reduction}
-      { t: 0.05, r: 0.00 },
-      { t: 0.10, r: 0.10 },
-      { t: 0.15, r: 0.20 },
-      { t: 0.20, r: 0.30 },
-      { t: 0.30, r: 0.40 },
-      { t: 0.40, r: 0.50 },
+    reductionMode: 'count', // 'count' = elasticity cuts policy COUNT, premium/policy rises
+                            //   with the rate increase; 'premium' = cuts premium dollars directly
+    elastic: [           // {t: required-increase threshold, r: policy-count reduction}
+      { t: 0.05, r: 0.05 },
+      { t: 0.10, r: 0.20 },
+      { t: 0.15, r: 0.35 },
+      { t: 0.20, r: 0.50 },
+      { t: 0.30, r: 0.65 },
+      { t: 0.40, r: 0.80 },
     ],
-    overrides: {},       // state -> reduction fraction
+    overrides: {},       // state -> count-reduction fraction
   };
 
   let DATA = null;       // loaded data.json
@@ -106,18 +108,25 @@
       const reqInc = rs ? rs.reqInc : 0;
       const on = S.stateOn[st] !== false;              // default: take the increase
       const start = S.stateStart[st] || S.defaultStart; // YYYY-MM-DD
-      // Rate-level reduction if/when the increase is fully in effect:
-      const reduction = on ? ((st in S.overrides) ? S.overrides[st] : elasticity(reqInc)) : 0;
+      // Policy-count reduction once the increase is fully in effect:
+      const countRed = on ? ((st in S.overrides) ? S.overrides[st] : elasticity(reqInc)) : 0;
+      // Premium uplift on the policies that DO get written (count mode only).
+      const uplift = (on && S.reductionMode === 'count') ? reqInc : 0;
       const b26 = sd.annual * scale;
       const monthsBase = sd.months.map(m => m * scale * (1 + S.growth));
-      // Apply the reduction only to PROJ_YEAR months on/after the start date.
-      const monthsAdj = monthsBase.map((v, i) => v * (1 - reduction * affectedFrac(start, i)));
+      // For PROJ_YEAR months on/after the start date: fewer policies (1-countRed)
+      // each carrying higher premium (1+uplift). Earlier months unchanged.
+      const monthsAdj = monthsBase.map((v, i) => {
+        const a = affectedFrac(start, i);
+        return v * (1 - countRed * a) * (1 + uplift * a);
+      });
       const b27 = monthsBase.reduce((a, b) => a + b, 0);
       const a27 = monthsAdj.reduce((a, b) => a + b, 0);
       sales[st] = {
         baseline2026: b26, baseline2027: b27, adjusted2027: a27,
-        reduction,                       // full rate-level reduction
-        effReduction: b27 ? (b27 - a27) / b27 : 0, // realized reduction in PROJ_YEAR after timing
+        countRed,                        // policy-count reduction (full effect)
+        uplift,                          // premium uplift per remaining policy
+        effReduction: b27 ? (b27 - a27) / b27 : 0, // net premium reduction in PROJ_YEAR after timing
         reqInc, loss: b27 - a27, on, start,
         hasRate: !!rs, months: monthsBase, monthsAdj,
       };
@@ -156,6 +165,10 @@
     pct1: v => (v * 100).toFixed(1) + '%',
     pct0: v => Math.round(v * 100) + '%',
     signpct: v => (v >= 0 ? '+' : '') + (v * 100).toFixed(1) + '%',
+    // loss is a positive number; negative loss = premium gain
+    lossGain: v => v >= 0
+      ? `<span style="color:var(--bad)">−$${Math.round(v).toLocaleString()}</span>`
+      : `<span style="color:var(--good)">+$${Math.round(-v).toLocaleString()}</span>`,
   };
   const SELL = new Set(); // selling states set (filled after load)
 
@@ -189,9 +202,10 @@
       kpi('2027 baseline sales', F.moneyShort(m.base2027),
           '2026 projection carried forward'),
       kpi('2027 adjusted sales', F.moneyShort(m.adj2027),
-          'After rate-driven attrition', 'good'),
-      kpi('Projected sales loss', '−' + F.moneyShort(m.totalLoss),
-          F.pct1(m.lossPct) + ' of baseline', 'bad'),
+          'After count drop + premium uplift', 'good'),
+      m.totalLoss >= 0
+        ? kpi('Net premium loss', '−' + F.moneyShort(m.totalLoss), F.pct1(m.lossPct) + ' of baseline', 'bad')
+        : kpi('Net premium gain', '+' + F.moneyShort(-m.totalLoss), F.pct1(-m.lossPct) + ' over baseline', 'good'),
     ].join('');
 
     // chart: baseline vs adjusted by selling state (sorted by baseline)
@@ -322,7 +336,7 @@
       const rs = m.rateStates[s], sa = m.sales[s];
       return { s, gap: rs.gapToday, wellabe: rs.wellabeAvg, big6: rs.big6Avg,
                target: rs.big6Avg * (1 + S.rerate) * (1 + S.offset), reqInc: rs.reqInc,
-               reduction: sa.reduction, cells: rs.cells };
+               reduction: sa.countRed, cells: rs.cells };
     });
     rows.sort((a, b) => {
       const av = a[incSort.key], bv = b[incSort.key];
@@ -330,7 +344,7 @@
       return cmp * incSort.dir;
     });
     const head = [['s', 'State', 'left'], ['gap', 'Gap today'], ['wellabe', 'Wellabe avg'],
-      ['big6', 'Big6 avg'], ['target', 'Target'], ['reqInc', 'Req %'], ['reduction', 'Full sales −%'], ['cells', 'Cells']];
+      ['big6', 'Big6 avg'], ['target', 'Target'], ['reqInc', 'Req %'], ['reduction', 'Count −%'], ['cells', 'Cells']];
     tbl.innerHTML = `<thead><tr>` +
       head.map(([k, lbl, cls]) => `<th class="${cls || ''}" data-k="${k}">${lbl}${incSort.key === k ? (incSort.dir < 0 ? ' ▼' : ' ▲') : ''}</th>`).join('') +
       `</tr></thead><tbody>` +
@@ -357,8 +371,10 @@
     document.getElementById('salesKpis').innerHTML = [
       kpi('2026 baseline', F.moneyShort(m.baseline2026), 'From sales-tracking projection'),
       kpi('2027 baseline', F.moneyShort(m.base2027), `Carried forward ${F.signpct(S.growth)}`),
-      kpi('2027 adjusted', F.moneyShort(m.adj2027), 'After rate-driven attrition', 'good'),
-      kpi('Sales lost to rerates', '−' + F.moneyShort(m.totalLoss), F.pct1(m.lossPct) + ' of baseline', 'bad'),
+      kpi('2027 adjusted', F.moneyShort(m.adj2027), 'After count drop + premium uplift', 'good'),
+      m.totalLoss >= 0
+        ? kpi('Net premium lost', '−' + F.moneyShort(m.totalLoss), F.pct1(m.lossPct) + ' of baseline', 'bad')
+        : kpi('Net premium gained', '+' + F.moneyShort(-m.totalLoss), F.pct1(-m.lossPct) + ' over baseline', 'good'),
     ].join('');
 
     const sts = [...DATA.salesStates].filter(s => DATA.sales[s].annual > 0)
@@ -366,15 +382,22 @@
     Charts.salesByState('chartSalesByState', sts,
       sts.map(s => m.sales[s].baseline2027), sts.map(s => m.sales[s].adjusted2027), { horizontal: false });
 
-    // waterfall: start baseline total, subtract each state's loss, end adjusted
-    const lossSorted = sts.filter(s => m.sales[s].loss > 0).sort((a, b) => m.sales[b].loss - m.sales[a].loss);
-    const wf = lossSorted.slice(0, 12); // top losers
-    const otherLoss = lossSorted.slice(12).reduce((a, s) => a + m.sales[s].loss, 0);
-    const labels = ['2027 baseline', ...wf.map(s => s), ...(otherLoss > 0 ? ['Other'] : []), '2027 adjusted'];
+    // waterfall: baseline -> each state's net premium delta (loss down / gain up) -> adjusted
+    const impactSorted = sts.filter(s => Math.abs(m.sales[s].loss) > 1)
+      .sort((a, b) => Math.abs(m.sales[b].loss) - Math.abs(m.sales[a].loss));
+    const wf = impactSorted.slice(0, 12);
+    const otherDelta = impactSorted.slice(12).reduce((a, s) => a + m.sales[s].loss, 0);
+    const steps = wf.map(s => ({ label: s, d: m.sales[s].loss }));
+    if (Math.abs(otherDelta) > 1) steps.push({ label: 'Other', d: otherDelta });
+    const labels = ['2027 baseline', ...steps.map(s => s.label), '2027 adjusted'];
     const bases = [0]; const floats = [m.base2027]; const colors = [Charts.COL.base];
     let running = m.base2027;
-    for (const s of wf) { const loss = m.sales[s].loss; bases.push(running - loss); floats.push(loss); colors.push(Charts.COL.loss); running -= loss; }
-    if (otherLoss > 0) { bases.push(running - otherLoss); floats.push(otherLoss); colors.push(Charts.COL.loss); running -= otherLoss; }
+    for (const { d } of steps) {
+      const after = running - d;
+      bases.push(Math.min(running, after)); floats.push(Math.abs(d));
+      colors.push(d >= 0 ? Charts.COL.loss : Charts.COL.good);
+      running = after;
+    }
     bases.push(0); floats.push(m.adj2027); colors.push(Charts.COL.adj);
     Charts.waterfall('chartSalesWaterfall', labels, bases, floats, colors);
 
@@ -388,24 +411,25 @@
     drawMonthly();
 
     // detail table
+    const countMode = S.reductionMode === 'count';
     const tbl = document.getElementById('salesTable');
     tbl.innerHTML = `<thead><tr>
-      <th class="left">State</th><th>Take?</th><th>Start</th><th>2026 base</th><th>2027 base</th><th>Req %</th>
-      <th>Full −%</th><th>2027 −% (timed)</th><th>2027 adjusted</th><th>Loss</th></tr></thead><tbody>` +
+      <th class="left">State</th><th>Take?</th><th>Start</th><th>2027 base</th>
+      <th>Count −%</th><th>Rate +%</th><th>Net −% (timed)</th><th>2027 adjusted</th><th>Loss / gain</th></tr></thead><tbody>` +
       sts.map(s => { const x = m.sales[s]; return `<tr>
         <td class="left">${s}${SELL.has(s) ? '<span class="tag-sell">sell</span>' : ''}${x.hasRate ? '' : ' <span class="muted">(no rate data)</span>'}</td>
         <td>${x.on ? '✓' : '<span class="muted">—</span>'}</td>
         <td class="muted">${x.on ? fmtStart(x.start) : '—'}</td>
-        <td>${F.money(x.baseline2026)}</td><td>${F.money(x.baseline2027)}</td>
-        <td class="${x.reqInc > 0.2 ? 'neg' : ''}">${F.pct1(x.reqInc)}</td>
-        <td class="muted">${x.on ? F.pct1(x.reduction) : '—'}</td>
-        <td class="${x.effReduction > 0 ? 'neg' : 'muted'}">${F.pct1(x.effReduction)}</td>
+        <td>${F.money(x.baseline2027)}</td>
+        <td class="${x.on && x.countRed > 0 ? 'neg' : 'muted'}">${x.on ? F.pct1(x.countRed) : '—'}</td>
+        <td class="${countMode && x.on && x.uplift > 0 ? 'pos' : 'muted'}">${countMode && x.on ? '+' + F.pct1(x.uplift) : '—'}</td>
+        <td class="${x.effReduction > 0 ? 'neg' : (x.effReduction < 0 ? 'pos' : 'muted')}">${F.pct1(x.effReduction)}</td>
         <td>${F.money(x.adjusted2027)}</td>
-        <td class="${x.loss > 0 ? 'neg' : 'muted'}">−${F.money(x.loss)}</td></tr>`; }).join('') +
+        <td>${F.lossGain(x.loss)}</td></tr>`; }).join('') +
       `<tr style="font-weight:700"><td class="left">TOTAL</td><td></td><td></td>
-        <td>${F.money(m.baseline2026)}</td><td>${F.money(m.base2027)}</td><td></td><td></td>
-        <td class="neg">${F.pct1(m.lossPct)}</td>
-        <td>${F.money(m.adj2027)}</td><td class="neg">−${F.money(m.totalLoss)}</td></tr></tbody>`;
+        <td>${F.money(m.base2027)}</td><td></td><td></td>
+        <td class="${m.lossPct >= 0 ? 'neg' : 'pos'}">${F.pct1(m.lossPct)}</td>
+        <td>${F.money(m.adj2027)}</td><td>${F.lossGain(m.totalLoss)}</td></tr></tbody>`;
   }
 
   // 'YYYY-MM-DD' -> 'Mon YYYY'
@@ -434,6 +458,8 @@
     g.oninput = () => { S.growth = +g.value; commit(); };
     bs.onchange = () => { S.benchStat = bs.value; commit(); };
     bl.oninput = () => { S.baselineTotal = +bl.value; commit(); };
+    const rm = document.getElementById('inReductionMode');
+    rm.onchange = () => { S.reductionMode = rm.value; buildElasticTable(); commit(); };
     document.getElementById('addTier').onclick = () => {
       S.elastic.push({ t: 0.5, r: 0.6 }); buildElasticTable(); commit();
     };
@@ -457,7 +483,8 @@
     const t = document.getElementById('elasticTable');
     const tiers = [...S.elastic].sort((a, b) => a.t - b.t);
     S.elastic = tiers;
-    t.innerHTML = `<thead><tr><th>Required increase ≥</th><th>Sales reduction</th><th></th></tr></thead><tbody>` +
+    const rlabel = S.reductionMode === 'count' ? 'Policy-count reduction' : 'Premium reduction';
+    t.innerHTML = `<thead><tr><th>Required increase ≥</th><th>${rlabel}</th><th></th></tr></thead><tbody>` +
       tiers.map((tier, i) => `<tr>
         <td><input type="number" step="1" min="0" data-i="${i}" data-f="t" value="${Math.round(tier.t * 100)}">%</td>
         <td><input type="number" step="1" min="0" data-i="${i}" data-f="r" value="${Math.round(tier.r * 100)}">%</td>
@@ -479,7 +506,7 @@
     const sts = DATA.salesStates.filter(s => DATA.sales[s].annual > 0);
     t.innerHTML = `<thead><tr>
       <th class="left">State</th><th>Take<br>increase</th><th class="left">Start date</th>
-      <th>Req&nbsp;%</th><th>Reduce&nbsp;override</th><th>2027&nbsp;−%<br>(timed)</th><th>2027&nbsp;loss</th>
+      <th>Rate&nbsp;+%</th><th>Count&nbsp;−%<br>override</th><th>Net&nbsp;−%<br>(timed)</th><th>2027&nbsp;loss / gain</th>
       </tr></thead><tbody>` +
       sts.map(s => {
         const x = m.sales[s], rs = m.rateStates[s];
@@ -492,8 +519,8 @@
           <td class="left"><input type="date" data-st="${s}" data-f="start" value="${start}" ${on ? '' : 'disabled'} style="min-width:140px"></td>
           <td class="${x.reqInc > 0.2 ? 'neg' : ''}">${rs ? F.pct1(x.reqInc) : '—'}</td>
           <td><input type="number" step="1" min="0" max="100" placeholder="auto" data-st="${s}" data-f="ov" value="${ov}" style="min-width:70px" ${on ? '' : 'disabled'}>%</td>
-          <td class="${x.effReduction > 0 ? 'neg' : 'muted'}">${F.pct1(x.effReduction)}</td>
-          <td class="${x.loss > 0 ? 'neg' : 'muted'}">−${F.money(x.loss)}</td></tr>`;
+          <td class="${x.effReduction > 0 ? 'neg' : (x.effReduction < 0 ? 'pos' : 'muted')}">${F.pct1(x.effReduction)}</td>
+          <td>${F.lossGain(x.loss)}</td></tr>`;
       }).join('') + '</tbody>';
 
     t.querySelectorAll('input').forEach(inp => {
@@ -525,6 +552,10 @@
       F.moneyShort(baseTot) + (S.baselineTotal && Math.abs(S.baselineTotal - DATA.baselineTotal) > 1
         ? ` (${F.signpct(baseTot / DATA.baselineTotal - 1)} vs model)` : ' (model)');
     document.getElementById('inDefaultStart').value = S.defaultStart;
+    document.getElementById('inReductionMode').value = S.reductionMode;
+    const isCount = S.reductionMode === 'count';
+    document.getElementById('elasticWhat').textContent = isCount ? 'policy-count' : 'premium';
+    document.getElementById('elasticWhat2').textContent = isCount ? 'policy count' : 'premium';
   }
 
   function commit() { saveState(); renderAll(); }

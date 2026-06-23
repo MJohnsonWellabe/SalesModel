@@ -95,7 +95,8 @@
     <h2 class="section">2027 Sales Projection</h2>
     <p class="lead">2026 projected sales (the sales-tracking model's <em>Projected w action</em> line, Approved basis,
       <strong id="salesBaseLbl">$288.3M</strong>) carried into 2027 with
-      <strong id="salesGrowthLbl">0%</strong> growth, then reduced by the rate-driven elasticity. Expand a state for the monthly view.</p>
+      <strong id="salesGrowthLbl">0%</strong> growth, then adjusted for the rate increase: fewer policies (elasticity on
+      <em>count</em>) but higher premium per policy. Net premium = (1 &minus; count reduction) &times; (1 + rate increase). Expand a state for the monthly view.</p>
     <div class="controls">
       <div class="field"><label>2026 baseline total (scales all states)</label>
         <input type="range" id="inBaseline" step="1000000" /><span class="rangeval" id="inBaselineVal"></span></div>
@@ -159,8 +160,18 @@
           <input type="range" id="inGrowth" min="-0.10" max="0.15" step="0.01" />
           <span class="rangeval" id="inGrowthVal"></span>
         </div>
-        <h3 style="margin-top:6px">Elasticity &mdash; rate increase &rarr; sales reduction</h3>
-        <div class="hint">A required increase of at least the threshold reduces that state's sales by the reduction. Editable.</div>
+        <div class="field" style="margin-bottom:14px">
+          <label>What the elasticity reduces</label>
+          <select id="inReductionMode">
+            <option value="count">Policy count &mdash; premium per policy rises with the rate increase</option>
+            <option value="premium">Premium dollars directly</option>
+          </select>
+        </div>
+        <div class="note">In <strong>policy-count</strong> mode the remaining policies each carry higher premium, so net
+          premium = (1 &minus; count reduction) &times; (1 + rate increase). The premium impact is smaller than the
+          count drop &mdash; and where the rate increase outweighs the count loss, premium can even rise.</div>
+        <h3 style="margin-top:6px">Elasticity &mdash; rate increase &rarr; <span id="elasticWhat">policy-count</span> reduction</h3>
+        <div class="hint">A required increase of at least the threshold cuts that state's <span id="elasticWhat2">policy count</span> by the reduction. Editable.</div>
         <table class="elastic" id="elasticTable"></table>
         <div style="margin-top:12px"><button class="btn secondary" id="addTier">+ Add tier</button></div>
       </div>
