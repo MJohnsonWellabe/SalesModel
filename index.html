@@ -93,8 +93,13 @@
   <!-- ===================== SALES ===================== -->
   <section class="tabpane" id="tab-sales">
     <h2 class="section">2027 Sales Projection</h2>
-    <p class="lead">2026 projected sales (from the sales-tracking model, $187.4M) carried into 2027 with
+    <p class="lead">2026 projected sales (the sales-tracking model's <em>Projected w action</em> line, Approved basis,
+      <strong id="salesBaseLbl">$288.3M</strong>) carried into 2027 with
       <strong id="salesGrowthLbl">0%</strong> growth, then reduced by the rate-driven elasticity. Expand a state for the monthly view.</p>
+    <div class="controls">
+      <div class="field"><label>2026 baseline total (scales all states)</label>
+        <input type="range" id="inBaseline" step="1000000" /><span class="rangeval" id="inBaselineVal"></span></div>
+    </div>
     <div class="kpis" id="salesKpis"></div>
     <div class="panel">
       <h3>Annual: baseline vs. adjusted 2027 by state</h3>

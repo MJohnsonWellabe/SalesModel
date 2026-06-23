@@ -8,6 +8,7 @@
     benchStat: 'avg',    // avg | median | min  (over the six Big-6 group rates)
     offset: -0.05,       // target position vs Big 6 post-rerate benchmark
     growth: 0.0,         // 2027 growth from 2026 baseline
+    baselineTotal: null, // 2026 baseline $ total (null => use data.json default)
     elastic: [           // {t: required-increase threshold, r: sales reduction}
       { t: 0.05, r: 0.00 },
       { t: 0.10, r: 0.10 },
@@ -82,6 +83,8 @@
     }
 
     // Sales projection over the selling states
+    const scale = (S.baselineTotal && DATA.baselineTotal)
+      ? S.baselineTotal / DATA.baselineTotal : 1;
     const sales = {};
     let base2027 = 0, adj2027 = 0, baseline2026 = 0;
     for (const st of DATA.salesStates) {
@@ -89,15 +92,15 @@
       const rs = rateStates[st];
       const reqInc = rs ? rs.reqInc : 0;
       const reduction = (st in S.overrides) ? S.overrides[st] : elasticity(reqInc);
-      const b26 = sd.annual;
+      const b26 = sd.annual * scale;
       const b27 = b26 * (1 + S.growth);
       const a27 = b27 * (1 - reduction);
       sales[st] = {
         baseline2026: b26, baseline2027: b27, adjusted2027: a27,
         reduction, reqInc, loss: b27 - a27,
         hasRate: !!rs,
-        months: sd.months.map(m => m * (1 + S.growth)),
-        monthsAdj: sd.months.map(m => m * (1 + S.growth) * (1 - reduction)),
+        months: sd.months.map(m => m * scale * (1 + S.growth)),
+        monthsAdj: sd.months.map(m => m * scale * (1 + S.growth) * (1 - reduction)),
       };
       baseline2026 += b26; base2027 += b27; adj2027 += a27;
     }
@@ -330,6 +333,7 @@
   function renderSales() {
     const m = MODEL;
     document.getElementById('salesGrowthLbl').textContent = F.signpct(S.growth);
+    document.getElementById('salesBaseLbl').textContent = F.moneyShort(m.baseline2026);
     document.getElementById('salesKpis').innerHTML = [
       kpi('2026 baseline', F.moneyShort(m.baseline2026), 'From sales-tracking projection'),
       kpi('2027 baseline', F.moneyShort(m.base2027), `Carried forward ${F.signpct(S.growth)}`),
@@ -392,10 +396,14 @@
     const o = document.getElementById('inOffset');
     const g = document.getElementById('inGrowth');
     const bs = document.getElementById('inBenchStat');
+    const bl = document.getElementById('inBaseline');
+    bl.min = Math.round(DATA.baselineTotal * 0.6);
+    bl.max = Math.round(DATA.baselineTotal * 1.4);
     r.oninput = () => { S.rerate = +r.value; commit(); };
     o.oninput = () => { S.offset = +o.value; commit(); };
     g.oninput = () => { S.growth = +g.value; commit(); };
     bs.onchange = () => { S.benchStat = bs.value; commit(); };
+    bl.oninput = () => { S.baselineTotal = +bl.value; commit(); };
     document.getElementById('addTier').onclick = () => {
       S.elastic.push({ t: 0.5, r: 0.6 }); buildElasticTable(); commit();
     };
@@ -447,6 +455,11 @@
     document.getElementById('inGrowth').value = S.growth;
     document.getElementById('inGrowthVal').textContent = F.signpct(S.growth);
     document.getElementById('inBenchStat').value = S.benchStat;
+    const baseTot = S.baselineTotal || DATA.baselineTotal;
+    document.getElementById('inBaseline').value = baseTot;
+    document.getElementById('inBaselineVal').textContent =
+      F.moneyShort(baseTot) + (S.baselineTotal && Math.abs(S.baselineTotal - DATA.baselineTotal) > 1
+        ? ` (${F.signpct(baseTot / DATA.baselineTotal - 1)} vs model)` : ' (model)');
   }
 
   function commit() { saveState(); renderAll(); }

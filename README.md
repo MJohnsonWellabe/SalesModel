@@ -45,8 +45,10 @@ All inputs are adjustable in the app; per-state reduction overrides are supporte
 
 - `data_sources/Ranks_v_Sales_MS_June.xlsx` — `Rates G` sheet: granular Plan G rates by carrier;
   `Lookup` sheet: Big 6 carrier tagging.
-- `data_sources/MS_Sales_Tracking_2026.xlsx` — `Projection` sheet ("Projected wo action"): 2026 projected
-  sales by state × month ($187.4M total), the 2027 carry-forward base.
+- `data_sources/MS_Sales_Tracking_2026.xlsx` — `Projection` sheet, **"Projected w action"** block
+  (Approved/issued basis): the company's planned-action 2026 projection by state × month (~$288.3M total),
+  the 2027 carry-forward base. This app's aggressive Big-6-matching increases are applied on top via the
+  elasticity curve.
 
 The Big 6 = UnitedHealthcare/AARP, Humana, Aetna, Cigna, Mutual of Omaha, and the Blue Cross Blue Shield plans.
 

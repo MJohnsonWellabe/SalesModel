@@ -129,19 +129,31 @@ def build_rate_cells():
 
 
 def build_sales():
+    """Per-state 2026 baseline from the Projection sheet's "Projected w action"
+    block (Approved basis) — the company's planned-action projection (~$288M).
+    Layout: a header row whose col 4 starts with 'Projected w act', followed by
+    one row per state with col 4 == 'Total', col 5 = state, col 6 = annual,
+    cols 7..18 = months 1..12."""
     wb = openpyxl.load_workbook(SALES_FILE, read_only=True, data_only=True)
     ws = wb["Projection"]
-    # Rows 2..29 (0-indexed) hold "Projected wo action" per state:
-    #   col 5 = state, col 6 = annual total, cols 7..18 = months 1..12
+    rows = list(ws.iter_rows(values_only=True))
+
+    hdr = None
+    for i, r in enumerate(rows):
+        if isinstance(r[4], str) and r[4].startswith("Projected w act"):
+            hdr = i
+            break
+    if hdr is None:
+        raise RuntimeError("Could not find 'Projected w action' block in Projection sheet")
+
     by_state = {}
-    for i, row in enumerate(ws.iter_rows(values_only=True)):
-        if 2 <= i <= 29 and row[5] and isinstance(row[6], (int, float)):
-            st = row[5]
-            months = [round(row[7 + m] or 0, 2) for m in range(12)]
-            by_state[st] = {
-                "annual": round(row[6], 2),
-                "months": months,
-            }
+    for i in range(hdr + 1, len(rows)):
+        r = rows[i]
+        if r[4] == "Total" and isinstance(r[5], str) and isinstance(r[6], (int, float)):
+            months = [round(r[7 + m] or 0, 2) for m in range(12)]
+            by_state[r[5]] = {"annual": round(r[6], 2), "months": months}
+        elif r[5] is None and r[6] is None and i > hdr + 2:
+            break
     wb.close()
     return by_state
 
@@ -169,6 +181,8 @@ def main():
         "cells": cells,
         "sales": sales,
         "baselineTotal": round(total, 2),
+        "salesBasis": "Approved (issued) premium",
+        "salesLine": "Projected w action (company planned-action 2026 projection)",
     }
     with open(OUT_FILE, "w") as f:
         json.dump(out, f, separators=(",", ":"))
