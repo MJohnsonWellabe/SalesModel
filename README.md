@@ -45,8 +45,15 @@ sales2027(state) = baseline2026(state) × (1 + growth) × (1 − reduction)
 
 Default count-reduction tiers: 5–10%→5%, 10–15%→20%, 15–20%→35%, 20–30%→50%, 30–40%→65%, >40%→80%
 (growth default 0%). The reduction (and premium uplift) apply only to **2027 months on/after each state's
-rate-increase start date**, weighted by the seasonal monthly shape. All inputs are adjustable; each state has
-a take/skip toggle, a start date, and an optional count-reduction override.
+rate-increase start date**, weighted by the seasonal monthly shape. A separate per-state **commission-cut**
+factor (default IN −50%) reduces 2027 volume across the whole year.
+
+**Default plan:** only the **top 10 states we are furthest below the Big 6** take the increase (start **4/1/2027**);
+all others are off. MD and CA are on but start **10/1**. IN carries a 50% commission cut. Every state has a
+take/skip toggle, start date, count-reduction override, and commission-cut input — all editable.
+
+**Exports:** the Executive Summary table and a **monthly-by-state matrix for 2026 & 2027** each export to CSV
+(Excel-ready) via their ⬇ buttons.
 
 ## Data sources
 

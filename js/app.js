@@ -2,16 +2,17 @@
 (() => {
   'use strict';
 
-  const LS_KEY = 'wellabe_rate_model_v2'; // bumped: count-based reduction + higher elasticity defaults
+  const LS_KEY = 'wellabe_rate_model_v3'; // bumped: 4/1 default start, top-10-on default, commission cuts
   const DEFAULTS = {
     rerate: 0.15,        // Big 6 rerate before we act
     benchStat: 'avg',    // avg | median | min  (over the six Big-6 group rates)
     offset: -0.05,       // target position vs Big 6 post-rerate benchmark
     growth: 0.0,         // 2027 growth from 2026 baseline
     baselineTotal: null, // 2026 baseline $ total (null => use data.json default)
-    defaultStart: '2027-01-01', // default rate-increase start date (per-state overridable)
+    defaultStart: '2027-04-01', // default rate-increase start date (per-state overridable)
     stateOn: {},         // state -> bool; absent => true (take the increase)
     stateStart: {},      // state -> 'YYYY-MM-DD'; absent => defaultStart
+    commissionCut: { IN: 0.5 }, // state -> 2027 sales reduction from commission cuts (full year)
     reductionMode: 'count', // 'count' = elasticity cuts policy COUNT, premium/policy rises
                             //   with the rate increase; 'premium' = cuts premium dollars directly
     elastic: [           // {t: required-increase threshold, r: policy-count reduction}
@@ -26,8 +27,11 @@
   };
 
   let DATA = null;       // loaded data.json
-  let S = loadState();   // current inputs
+  let FRESH = false;     // true when no saved settings exist (apply computed default plan)
+  let S = loadState();   // current inputs (may set FRESH)
   let MODEL = null;      // computed model (cached)
+  let SUMMARY_EXPORT = [];  // array-of-arrays for the summary CSV export
+  let MONTHLY_EXPORT = [];   // array-of-arrays for the monthly-by-state CSV export
 
   // ---------- state ----------
   function loadState() {
@@ -35,9 +39,30 @@
       const raw = JSON.parse(localStorage.getItem(LS_KEY));
       if (raw) return Object.assign(structuredClone(DEFAULTS), raw);
     } catch (e) { /* ignore */ }
+    FRESH = true;
     return structuredClone(DEFAULTS);
   }
   function saveState() { localStorage.setItem(LS_KEY, JSON.stringify(S)); }
+
+  // Default per-state plan (needs computed gaps): only the top-10 states we are
+  // most behind Big 6 take the increase; MD & CA are on but start late (10/1).
+  function applyDefaultPlan() {
+    compute(); // rate-side gaps are independent of the plan inputs
+    const ranked = DATA.salesStates
+      .filter(s => MODEL.rateStates[s])
+      .sort((a, b) => MODEL.rateStates[b].gapToday - MODEL.rateStates[a].gapToday);
+    const top10 = new Set(ranked.slice(0, 10));
+    S.stateOn = {};
+    S.stateStart = {};
+    for (const s of DATA.salesStates) {
+      if (!top10.has(s)) S.stateOn[s] = false; // top 10 stay on (absent => on)
+    }
+    for (const s of ['MD', 'CA']) {            // on, but only from Oct 1
+      delete S.stateOn[s];
+      S.stateStart[s] = '2027-10-01';
+    }
+    saveState();
+  }
 
   // ---------- compute engine ----------
   function benchmark(big6, stat) {
@@ -112,13 +137,17 @@
       const countRed = on ? ((st in S.overrides) ? S.overrides[st] : elasticity(reqInc)) : 0;
       // Premium uplift on the policies that DO get written (count mode only).
       const uplift = (on && S.reductionMode === 'count') ? reqInc : 0;
+      // Commission-cut volume reduction applied across all of 2027 (e.g. IN -50%).
+      const comm = S.commissionCut[st] || 0;
+      const commFactor = 1 - comm;
       const b26 = sd.annual * scale;
-      const monthsBase = sd.months.map(m => m * scale * (1 + S.growth));
-      // For PROJ_YEAR months on/after the start date: fewer policies (1-countRed)
-      // each carrying higher premium (1+uplift). Earlier months unchanged.
+      const months26 = sd.months.map(m => m * scale);          // 2026 baseline by month
+      const monthsBase = sd.months.map(m => m * scale * (1 + S.growth)); // 2027 baseline by month
+      // 2027 by month: commission cut all year, plus (for months on/after start)
+      // fewer policies (1-countRed) each at higher premium (1+uplift).
       const monthsAdj = monthsBase.map((v, i) => {
         const a = affectedFrac(start, i);
-        return v * (1 - countRed * a) * (1 + uplift * a);
+        return v * commFactor * (1 - countRed * a) * (1 + uplift * a);
       });
       const b27 = monthsBase.reduce((a, b) => a + b, 0);
       const a27 = monthsAdj.reduce((a, b) => a + b, 0);
@@ -126,9 +155,10 @@
         baseline2026: b26, baseline2027: b27, adjusted2027: a27,
         countRed,                        // policy-count reduction (full effect)
         uplift,                          // premium uplift per remaining policy
-        effReduction: b27 ? (b27 - a27) / b27 : 0, // net premium reduction in PROJ_YEAR after timing
+        comm,                            // commission-cut reduction (full year 2027)
+        effReduction: b27 ? (b27 - a27) / b27 : 0, // net reduction in PROJ_YEAR after timing
         reqInc, loss: b27 - a27, on, start,
-        hasRate: !!rs, months: monthsBase, monthsAdj,
+        hasRate: !!rs, months26, months: monthsBase, monthsAdj,
       };
       baseline2026 += b26; base2027 += b27; adj2027 += a27;
     }
@@ -172,6 +202,21 @@
   };
   const SELL = new Set(); // selling states set (filled after load)
 
+  // Export an array-of-arrays (first row = header) as a CSV that Excel opens cleanly.
+  function downloadCSV(filename, rows) {
+    const esc = v => {
+      const s = v == null ? '' : String(v);
+      return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const csv = rows.map(r => r.map(esc).join(',')).join('\r\n');
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
   // ---------- rendering ----------
   function renderAll() {
     compute();
@@ -208,19 +253,51 @@
         : kpi('Net premium gain', '+' + F.moneyShort(-m.totalLoss), F.pct1(-m.lossPct) + ' over baseline', 'good'),
     ].join('');
 
-    // chart: baseline vs adjusted by selling state (sorted by baseline)
+    // State-by-state summary table (sorted by 2027 baseline)
     const sts = [...DATA.salesStates].filter(s => DATA.sales[s].annual > 0)
-      .sort((a, b) => DATA.sales[b].annual - DATA.sales[a].annual);
+      .sort((a, b) => m.sales[b].baseline2027 - m.sales[a].baseline2027);
+    const header = ['State', 'Gap vs Big6 %', 'Req increase %', 'Take', 'Start',
+      'Comm cut %', '2027 baseline', '2027 adjusted', 'Net change %', 'Loss/gain'];
+    const rows = sts.map(s => {
+      const x = m.sales[s], rs = m.rateStates[s];
+      return {
+        s, gap: rs ? rs.gapToday : null, req: rs ? x.reqInc : null,
+        on: x.on, start: x.on ? x.start : '', comm: x.comm,
+        base: x.baseline2027, adj: x.adjusted2027, net: x.effReduction, loss: x.loss,
+      };
+    });
+    SUMMARY_EXPORT = [header, ...rows.map(r => [
+      r.s, r.gap == null ? '' : (r.gap * 100).toFixed(1), r.req == null ? '' : (r.req * 100).toFixed(1),
+      r.on ? 'Yes' : 'No', r.start, (r.comm * 100).toFixed(0),
+      Math.round(r.base), Math.round(r.adj), (r.net * 100).toFixed(1), Math.round(-r.loss),
+    ]), ['TOTAL', '', '', '', '', '', Math.round(m.base2027), Math.round(m.adj2027),
+      (m.lossPct * 100).toFixed(1), Math.round(-m.totalLoss)]];
+
+    const tbl = document.getElementById('summaryTable');
+    tbl.innerHTML = `<thead><tr>
+      <th class="left">State</th><th>Gap vs Big6</th><th>Req +%</th><th>Take</th><th class="left">Start</th>
+      <th>Comm −%</th><th>2027 baseline</th><th>2027 adjusted</th><th>Net Δ%</th><th>Loss / gain</th>
+      </tr></thead><tbody>` +
+      rows.map(r => `<tr>
+        <td class="left">${r.s}</td>
+        <td class="${r.gap > 0 ? 'pos' : 'muted'}">${r.gap == null ? '—' : F.pct1(r.gap)}</td>
+        <td>${r.req == null ? '—' : F.pct1(r.req)}</td>
+        <td class="${r.on ? '' : 'muted'}">${r.on ? '✓' : '—'}</td>
+        <td class="left muted">${r.on ? fmtStart(r.start) : '—'}</td>
+        <td class="${r.comm > 0 ? 'neg' : 'muted'}">${r.comm > 0 ? F.pct1(r.comm) : '—'}</td>
+        <td>${F.money(r.base)}</td><td>${F.money(r.adj)}</td>
+        <td class="${r.net > 0 ? 'neg' : (r.net < 0 ? 'pos' : 'muted')}">${F.pct1(r.net)}</td>
+        <td>${F.lossGain(r.loss)}</td></tr>`).join('') +
+      `<tr style="font-weight:700"><td class="left">TOTAL</td><td></td><td></td><td></td><td></td><td></td>
+        <td>${F.money(m.base2027)}</td><td>${F.money(m.adj2027)}</td>
+        <td class="${m.lossPct >= 0 ? 'neg' : 'pos'}">${F.pct1(m.lossPct)}</td>
+        <td>${F.lossGain(m.totalLoss)}</td></tr></tbody>`;
+
+    // one chart kept for visual appeal
     Charts.salesByState('chartSummarySales', sts,
       sts.map(s => m.sales[s].baseline2027),
       sts.map(s => m.sales[s].adjusted2027),
       { horizontal: true });
-
-    // chart: today's gap (wellabe as % of big6) for selling states
-    const gs = sts.filter(s => m.rateStates[s]);
-    Charts.pctByState('chartSummaryGap', gs,
-      gs.map(s => 1 / (1 + m.rateStates[s].gapToday)), // wellabe / big6
-      gs.map(() => Charts.COL.wellabe), { label: 'Wellabe vs Big 6:' });
   }
 
   // ----- Rate Competitiveness tab -----
@@ -430,6 +507,40 @@
         <td>${F.money(m.base2027)}</td><td></td><td></td>
         <td class="${m.lossPct >= 0 ? 'neg' : 'pos'}">${F.pct1(m.lossPct)}</td>
         <td>${F.money(m.adj2027)}</td><td>${F.lossGain(m.totalLoss)}</td></tr></tbody>`;
+
+    renderMonthlyTable(sts);
+  }
+
+  // Monthly-by-state matrix for 2026 (baseline) and 2027 (adjusted), + CSV export.
+  function renderMonthlyTable(sts) {
+    const m = MODEL, mo = DATA.months;
+    const header = ['State', 'Year', ...mo, 'Total'];
+    const exp = [header];
+    const bodyRows = [];
+    const totals26 = Array(12).fill(0), totals27 = Array(12).fill(0);
+    for (const s of sts) {
+      const x = m.sales[s];
+      const sum = a => a.reduce((p, c) => p + c, 0);
+      x.months26.forEach((v, i) => totals26[i] += v);
+      x.monthsAdj.forEach((v, i) => totals27[i] += v);
+      exp.push([s, 2026, ...x.months26.map(v => Math.round(v)), Math.round(sum(x.months26))]);
+      exp.push([s, 2027, ...x.monthsAdj.map(v => Math.round(v)), Math.round(sum(x.monthsAdj))]);
+      bodyRows.push(`<tr><td class="left" rowspan="2">${s}</td><td class="muted">2026</td>${
+        x.months26.map(v => `<td>${F.moneyShort(v)}</td>`).join('')}<td>${F.moneyShort(sum(x.months26))}</td></tr>
+        <tr><td>2027</td>${x.monthsAdj.map(v => `<td>${F.moneyShort(v)}</td>`).join('')}<td>${F.moneyShort(sum(x.monthsAdj))}</td></tr>`);
+    }
+    const sumAll = a => a.reduce((p, c) => p + c, 0);
+    exp.push(['TOTAL', 2026, ...totals26.map(v => Math.round(v)), Math.round(sumAll(totals26))]);
+    exp.push(['TOTAL', 2027, ...totals27.map(v => Math.round(v)), Math.round(sumAll(totals27))]);
+    MONTHLY_EXPORT = exp;
+
+    const tbl = document.getElementById('monthlyTable');
+    tbl.innerHTML = `<thead><tr><th class="left">State</th><th>Year</th>${
+      mo.map(x => `<th>${x}</th>`).join('')}<th>Total</th></tr></thead><tbody>` +
+      bodyRows.join('') +
+      `<tr style="font-weight:700"><td class="left" rowspan="2">TOTAL</td><td>2026</td>${
+        totals26.map(v => `<td>${F.moneyShort(v)}</td>`).join('')}<td>${F.moneyShort(sumAll(totals26))}</td></tr>
+       <tr style="font-weight:700"><td>2027</td>${totals27.map(v => `<td>${F.moneyShort(v)}</td>`).join('')}<td>${F.moneyShort(sumAll(totals27))}</td></tr></tbody>`;
   }
 
   // 'YYYY-MM-DD' -> 'Mon YYYY'
@@ -460,6 +571,10 @@
     bl.oninput = () => { S.baselineTotal = +bl.value; commit(); };
     const rm = document.getElementById('inReductionMode');
     rm.onchange = () => { S.reductionMode = rm.value; buildElasticTable(); commit(); };
+    document.getElementById('dlSummary').onclick = () =>
+      downloadCSV('wellabe_2027_summary.csv', SUMMARY_EXPORT);
+    document.getElementById('dlMonthly').onclick = () =>
+      downloadCSV('wellabe_monthly_by_state_2026_2027.csv', MONTHLY_EXPORT);
     document.getElementById('addTier').onclick = () => {
       S.elastic.push({ t: 0.5, r: 0.6 }); buildElasticTable(); commit();
     };
@@ -474,7 +589,7 @@
       DATA.salesStates.forEach(s => { S.stateOn[s] = false; }); commit();
     };
     document.getElementById('resetBtn').onclick = () => {
-      S = structuredClone(DEFAULTS); saveState(); buildElasticTable(); renderAll();
+      S = structuredClone(DEFAULTS); applyDefaultPlan(); buildElasticTable(); renderAll();
     };
     buildElasticTable();
   }
@@ -506,19 +621,21 @@
     const sts = DATA.salesStates.filter(s => DATA.sales[s].annual > 0);
     t.innerHTML = `<thead><tr>
       <th class="left">State</th><th>Take<br>increase</th><th class="left">Start date</th>
-      <th>Rate&nbsp;+%</th><th>Count&nbsp;−%<br>override</th><th>Net&nbsp;−%<br>(timed)</th><th>2027&nbsp;loss / gain</th>
+      <th>Rate&nbsp;+%</th><th>Count&nbsp;−%<br>override</th><th>Comm<br>cut&nbsp;%</th><th>Net&nbsp;−%<br>(timed)</th><th>2027&nbsp;loss / gain</th>
       </tr></thead><tbody>` +
       sts.map(s => {
         const x = m.sales[s], rs = m.rateStates[s];
         const on = S.stateOn[s] !== false;
         const start = S.stateStart[s] || S.defaultStart;
         const ov = s in S.overrides ? Math.round(S.overrides[s] * 100) : '';
+        const cc = s in S.commissionCut ? Math.round(S.commissionCut[s] * 100) : '';
         return `<tr>
           <td class="left">${s}${SELL.has(s) ? '<span class="tag-sell">sell</span>' : ''}${rs ? '' : ' <span class="muted">(no rate data)</span>'}</td>
           <td><input type="checkbox" data-st="${s}" data-f="on" ${on ? 'checked' : ''}></td>
           <td class="left"><input type="date" data-st="${s}" data-f="start" value="${start}" ${on ? '' : 'disabled'} style="min-width:140px"></td>
           <td class="${x.reqInc > 0.2 ? 'neg' : ''}">${rs ? F.pct1(x.reqInc) : '—'}</td>
           <td><input type="number" step="1" min="0" max="100" placeholder="auto" data-st="${s}" data-f="ov" value="${ov}" style="min-width:70px" ${on ? '' : 'disabled'}>%</td>
+          <td><input type="number" step="1" min="0" max="100" placeholder="0" data-st="${s}" data-f="cc" value="${cc}" style="min-width:60px">%</td>
           <td class="${x.effReduction > 0 ? 'neg' : (x.effReduction < 0 ? 'pos' : 'muted')}">${F.pct1(x.effReduction)}</td>
           <td>${F.lossGain(x.loss)}</td></tr>`;
       }).join('') + '</tbody>';
@@ -531,6 +648,10 @@
         else if (f === 'ov') {
           if (inp.value === '') delete S.overrides[st];
           else S.overrides[st] = Math.max(0, Math.min(1, (+inp.value) / 100));
+        }
+        else if (f === 'cc') {
+          if (inp.value === '' || +inp.value === 0) delete S.commissionCut[st];
+          else S.commissionCut[st] = Math.max(0, Math.min(1, (+inp.value) / 100));
         }
         commit();
       };
@@ -580,6 +701,7 @@
       `Plan G rates: ${data.cells.length.toLocaleString()} zip-3 × age × gender cells · ` +
       `Baseline 2026 sales: ${F.money(data.baselineTotal)} across ${data.salesStates.length} states · ` +
       `Data generated ${data.generated}`;
+    if (FRESH) applyDefaultPlan(); // top-10-on / MD-CA-late default plan
     initTabs();
     buildRateControls();
     buildInputs();

@@ -32,17 +32,17 @@
       Because we sit well below the Big&nbsp;6 today, closing that gap requires sizeable increases &mdash; which reduce 2027 sales.
     </p>
     <div class="kpis" id="summaryKpis"></div>
-    <div class="grid2-2-1">
-      <div class="panel">
-        <h3>2026 baseline vs. 2027 projected sales by state</h3>
-        <div class="hint">Baseline = 2026 projection carried into 2027 (no growth). Adjusted = after rate-driven sales reduction.</div>
-        <div class="chart-wrap tall"><canvas id="chartSummarySales"></canvas></div>
-      </div>
-      <div class="panel">
-        <h3>Where we stand today</h3>
-        <div class="hint">Wellabe rate as % of the Big&nbsp;6 average (today). Below 100% = we are cheaper.</div>
-        <div class="chart-wrap tall"><canvas id="chartSummaryGap"></canvas></div>
-      </div>
+    <div class="panel">
+      <h3>State-by-state summary
+        <button class="btn secondary" id="dlSummary" style="float:right">⬇ Export to Excel (CSV)</button></h3>
+      <div class="hint">Gap = how far below the Big&nbsp;6 average we sit today. Take/Start = the planned increase.
+        2027 adjusted reflects commission cuts, the rate-driven count change &amp; premium uplift, timed by start date.</div>
+      <div class="table-scroll"><table class="data" id="summaryTable"></table></div>
+    </div>
+    <div class="panel">
+      <h3>2027 baseline vs. adjusted sales by state</h3>
+      <div class="hint">Baseline = 2026 projection carried into 2027. Adjusted = after the full plan.</div>
+      <div class="chart-wrap tall"><canvas id="chartSummarySales"></canvas></div>
     </div>
   </section>
 
@@ -122,6 +122,13 @@
     <div class="panel">
       <h3>State detail</h3>
       <div class="table-scroll"><table class="data" id="salesTable"></table></div>
+    </div>
+    <div class="panel">
+      <h3>Monthly by state &mdash; 2026 &amp; 2027
+        <button class="btn secondary" id="dlMonthly" style="float:right">⬇ Export to Excel (CSV)</button></h3>
+      <div class="hint">2026 = baseline projection by month. 2027 = adjusted (commission cuts + rate-driven count change
+        &amp; premium uplift, applied to months on/after each state's start date).</div>
+      <div class="table-scroll"><table class="data" id="monthlyTable"></table></div>
     </div>
   </section>
 
