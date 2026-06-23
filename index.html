@@ -166,9 +166,17 @@
       </div>
     </div>
     <div class="panel">
-      <h3>Per-state sales-reduction overrides (optional)</h3>
-      <div class="hint">Leave blank to use the elasticity curve. Enter a % to force a specific 2027 reduction for a state.</div>
-      <div id="overrideGrid" class="controls"></div>
+      <h3>Per-state rate-increase plan</h3>
+      <div class="hint">Choose whether each state <strong>takes</strong> the Big&nbsp;6-matching increase and <strong>when</strong> it starts.
+        Sales only drop for 2027 months on/after the start date (seasonality-weighted, so a mid-year start hits less of 2027).
+        The reduction override is optional &mdash; leave blank to use the elasticity curve.</div>
+      <div class="controls">
+        <div class="field"><label>Default start date</label><input type="date" id="inDefaultStart" /></div>
+        <div class="field"><label>&nbsp;</label><button class="btn secondary" id="applyStartAll">Apply to all</button></div>
+        <div class="field"><label>&nbsp;</label><button class="btn secondary" id="enableAll">Take all</button></div>
+        <div class="field"><label>&nbsp;</label><button class="btn secondary" id="disableAll">Take none</button></div>
+      </div>
+      <div class="table-scroll"><table class="data" id="statePlanTable"></table></div>
     </div>
     <div class="controls sticky-bar">
       <button class="btn secondary" id="resetBtn">Reset to defaults</button>

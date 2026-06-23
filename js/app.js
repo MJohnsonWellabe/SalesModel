@@ -9,6 +9,9 @@
     offset: -0.05,       // target position vs Big 6 post-rerate benchmark
     growth: 0.0,         // 2027 growth from 2026 baseline
     baselineTotal: null, // 2026 baseline $ total (null => use data.json default)
+    defaultStart: '2027-01-01', // default rate-increase start date (per-state overridable)
+    stateOn: {},         // state -> bool; absent => true (take the increase)
+    stateStart: {},      // state -> 'YYYY-MM-DD'; absent => defaultStart
     elastic: [           // {t: required-increase threshold, r: sales reduction}
       { t: 0.05, r: 0.00 },
       { t: 0.10, r: 0.10 },
@@ -45,6 +48,16 @@
       return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
     }
     return vals.reduce((a, b) => a + b, 0) / vals.length; // avg
+  }
+
+  const PROJ_YEAR = 2027; // the projection window we reduce
+  // Is PROJ_YEAR month `monthIdx` (0..11) on/after the rate-increase start date?
+  function affectedFrac(startStr, monthIdx) {
+    const [sy, sm] = String(startStr).split('-').map(Number);
+    if (!sy) return 1;
+    if (sy < PROJ_YEAR) return 1;   // already in effect before the window
+    if (sy > PROJ_YEAR) return 0;   // starts after the window
+    return (monthIdx + 1) >= sm ? 1 : 0;
   }
 
   function elasticity(inc) {
@@ -91,16 +104,22 @@
       const sd = DATA.sales[st];
       const rs = rateStates[st];
       const reqInc = rs ? rs.reqInc : 0;
-      const reduction = (st in S.overrides) ? S.overrides[st] : elasticity(reqInc);
+      const on = S.stateOn[st] !== false;              // default: take the increase
+      const start = S.stateStart[st] || S.defaultStart; // YYYY-MM-DD
+      // Rate-level reduction if/when the increase is fully in effect:
+      const reduction = on ? ((st in S.overrides) ? S.overrides[st] : elasticity(reqInc)) : 0;
       const b26 = sd.annual * scale;
-      const b27 = b26 * (1 + S.growth);
-      const a27 = b27 * (1 - reduction);
+      const monthsBase = sd.months.map(m => m * scale * (1 + S.growth));
+      // Apply the reduction only to PROJ_YEAR months on/after the start date.
+      const monthsAdj = monthsBase.map((v, i) => v * (1 - reduction * affectedFrac(start, i)));
+      const b27 = monthsBase.reduce((a, b) => a + b, 0);
+      const a27 = monthsAdj.reduce((a, b) => a + b, 0);
       sales[st] = {
         baseline2026: b26, baseline2027: b27, adjusted2027: a27,
-        reduction, reqInc, loss: b27 - a27,
-        hasRate: !!rs,
-        months: sd.months.map(m => m * scale * (1 + S.growth)),
-        monthsAdj: sd.months.map(m => m * scale * (1 + S.growth) * (1 - reduction)),
+        reduction,                       // full rate-level reduction
+        effReduction: b27 ? (b27 - a27) / b27 : 0, // realized reduction in PROJ_YEAR after timing
+        reqInc, loss: b27 - a27, on, start,
+        hasRate: !!rs, months: monthsBase, monthsAdj,
       };
       baseline2026 += b26; base2027 += b27; adj2027 += a27;
     }
@@ -147,6 +166,7 @@
     renderRates();
     renderIncreases();
     renderSales();
+    renderStatePlan();
     syncInputWidgets();
   }
 
@@ -310,7 +330,7 @@
       return cmp * incSort.dir;
     });
     const head = [['s', 'State', 'left'], ['gap', 'Gap today'], ['wellabe', 'Wellabe avg'],
-      ['big6', 'Big6 avg'], ['target', 'Target'], ['reqInc', 'Req %'], ['reduction', 'Sales −%'], ['cells', 'Cells']];
+      ['big6', 'Big6 avg'], ['target', 'Target'], ['reqInc', 'Req %'], ['reduction', 'Full sales −%'], ['cells', 'Cells']];
     tbl.innerHTML = `<thead><tr>` +
       head.map(([k, lbl, cls]) => `<th class="${cls || ''}" data-k="${k}">${lbl}${incSort.key === k ? (incSort.dir < 0 ? ' ▼' : ' ▲') : ''}</th>`).join('') +
       `</tr></thead><tbody>` +
@@ -370,18 +390,28 @@
     // detail table
     const tbl = document.getElementById('salesTable');
     tbl.innerHTML = `<thead><tr>
-      <th class="left">State</th><th>2026 base</th><th>2027 base</th><th>Req %</th>
-      <th>Sales −%</th><th>2027 adjusted</th><th>Loss</th></tr></thead><tbody>` +
+      <th class="left">State</th><th>Take?</th><th>Start</th><th>2026 base</th><th>2027 base</th><th>Req %</th>
+      <th>Full −%</th><th>2027 −% (timed)</th><th>2027 adjusted</th><th>Loss</th></tr></thead><tbody>` +
       sts.map(s => { const x = m.sales[s]; return `<tr>
         <td class="left">${s}${SELL.has(s) ? '<span class="tag-sell">sell</span>' : ''}${x.hasRate ? '' : ' <span class="muted">(no rate data)</span>'}</td>
+        <td>${x.on ? '✓' : '<span class="muted">—</span>'}</td>
+        <td class="muted">${x.on ? fmtStart(x.start) : '—'}</td>
         <td>${F.money(x.baseline2026)}</td><td>${F.money(x.baseline2027)}</td>
         <td class="${x.reqInc > 0.2 ? 'neg' : ''}">${F.pct1(x.reqInc)}</td>
-        <td class="neg">${F.pct1(x.reduction)}</td>
+        <td class="muted">${x.on ? F.pct1(x.reduction) : '—'}</td>
+        <td class="${x.effReduction > 0 ? 'neg' : 'muted'}">${F.pct1(x.effReduction)}</td>
         <td>${F.money(x.adjusted2027)}</td>
-        <td class="neg">−${F.money(x.loss)}</td></tr>`; }).join('') +
-      `<tr style="font-weight:700"><td class="left">TOTAL</td>
+        <td class="${x.loss > 0 ? 'neg' : 'muted'}">−${F.money(x.loss)}</td></tr>`; }).join('') +
+      `<tr style="font-weight:700"><td class="left">TOTAL</td><td></td><td></td>
         <td>${F.money(m.baseline2026)}</td><td>${F.money(m.base2027)}</td><td></td><td></td>
+        <td class="neg">${F.pct1(m.lossPct)}</td>
         <td>${F.money(m.adj2027)}</td><td class="neg">−${F.money(m.totalLoss)}</td></tr></tbody>`;
+  }
+
+  // 'YYYY-MM-DD' -> 'Mon YYYY'
+  function fmtStart(s) {
+    const [y, mo] = String(s).split('-').map(Number);
+    return DATA.months[(mo || 1) - 1] + " '" + String(y).slice(2);
   }
 
   function drawMonthly() {
@@ -407,11 +437,20 @@
     document.getElementById('addTier').onclick = () => {
       S.elastic.push({ t: 0.5, r: 0.6 }); buildElasticTable(); commit();
     };
+    // Per-state plan bulk controls
+    const ds = document.getElementById('inDefaultStart');
+    ds.onchange = () => { S.defaultStart = ds.value || '2027-01-01'; commit(); };
+    document.getElementById('applyStartAll').onclick = () => {
+      DATA.salesStates.forEach(s => { S.stateStart[s] = S.defaultStart; }); commit();
+    };
+    document.getElementById('enableAll').onclick = () => { S.stateOn = {}; commit(); };
+    document.getElementById('disableAll').onclick = () => {
+      DATA.salesStates.forEach(s => { S.stateOn[s] = false; }); commit();
+    };
     document.getElementById('resetBtn').onclick = () => {
-      S = structuredClone(DEFAULTS); saveState(); buildElasticTable(); buildOverrides(); renderAll();
+      S = structuredClone(DEFAULTS); saveState(); buildElasticTable(); renderAll();
     };
     buildElasticTable();
-    buildOverrides();
   }
 
   function buildElasticTable() {
@@ -432,17 +471,42 @@
     });
   }
 
-  function buildOverrides() {
-    const g = document.getElementById('overrideGrid');
-    g.innerHTML = DATA.salesStates.filter(s => DATA.sales[s].annual > 0).map(s =>
-      `<div class="field"><label>${s}</label>
-        <input type="number" step="1" min="0" max="100" placeholder="auto" data-st="${s}"
-          style="min-width:80px" value="${s in S.overrides ? Math.round(S.overrides[s] * 100) : ''}"></div>`).join('');
-    g.querySelectorAll('input').forEach(inp => inp.onchange = () => {
-      const st = inp.dataset.st;
-      if (inp.value === '') delete S.overrides[st];
-      else S.overrides[st] = Math.max(0, Math.min(1, (+inp.value) / 100));
-      commit();
+  // Per-state plan table (rebuilt each recompute; inputs commit on blur).
+  function renderStatePlan() {
+    const t = document.getElementById('statePlanTable');
+    if (!t) return;
+    const m = MODEL;
+    const sts = DATA.salesStates.filter(s => DATA.sales[s].annual > 0);
+    t.innerHTML = `<thead><tr>
+      <th class="left">State</th><th>Take<br>increase</th><th class="left">Start date</th>
+      <th>Req&nbsp;%</th><th>Reduce&nbsp;override</th><th>2027&nbsp;−%<br>(timed)</th><th>2027&nbsp;loss</th>
+      </tr></thead><tbody>` +
+      sts.map(s => {
+        const x = m.sales[s], rs = m.rateStates[s];
+        const on = S.stateOn[s] !== false;
+        const start = S.stateStart[s] || S.defaultStart;
+        const ov = s in S.overrides ? Math.round(S.overrides[s] * 100) : '';
+        return `<tr>
+          <td class="left">${s}${SELL.has(s) ? '<span class="tag-sell">sell</span>' : ''}${rs ? '' : ' <span class="muted">(no rate data)</span>'}</td>
+          <td><input type="checkbox" data-st="${s}" data-f="on" ${on ? 'checked' : ''}></td>
+          <td class="left"><input type="date" data-st="${s}" data-f="start" value="${start}" ${on ? '' : 'disabled'} style="min-width:140px"></td>
+          <td class="${x.reqInc > 0.2 ? 'neg' : ''}">${rs ? F.pct1(x.reqInc) : '—'}</td>
+          <td><input type="number" step="1" min="0" max="100" placeholder="auto" data-st="${s}" data-f="ov" value="${ov}" style="min-width:70px" ${on ? '' : 'disabled'}>%</td>
+          <td class="${x.effReduction > 0 ? 'neg' : 'muted'}">${F.pct1(x.effReduction)}</td>
+          <td class="${x.loss > 0 ? 'neg' : 'muted'}">−${F.money(x.loss)}</td></tr>`;
+      }).join('') + '</tbody>';
+
+    t.querySelectorAll('input').forEach(inp => {
+      const st = inp.dataset.st, f = inp.dataset.f;
+      inp.onchange = () => {
+        if (f === 'on') { if (inp.checked) delete S.stateOn[st]; else S.stateOn[st] = false; }
+        else if (f === 'start') { S.stateStart[st] = inp.value || S.defaultStart; }
+        else if (f === 'ov') {
+          if (inp.value === '') delete S.overrides[st];
+          else S.overrides[st] = Math.max(0, Math.min(1, (+inp.value) / 100));
+        }
+        commit();
+      };
     });
   }
 
@@ -460,6 +524,7 @@
     document.getElementById('inBaselineVal').textContent =
       F.moneyShort(baseTot) + (S.baselineTotal && Math.abs(S.baselineTotal - DATA.baselineTotal) > 1
         ? ` (${F.signpct(baseTot / DATA.baselineTotal - 1)} vs model)` : ' (model)');
+    document.getElementById('inDefaultStart').value = S.defaultStart;
   }
 
   function commit() { saveState(); renderAll(); }
