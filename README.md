@@ -47,15 +47,16 @@ Default count-reduction tiers: 5–10%→5%, 10–15%→15%, 15–20%→30%, 20�
 (growth default 0%). The reduction (and premium uplift) apply only to **2027 months on/after each state's
 rate-increase start date**, weighted by the seasonal monthly shape.
 
-**Baseline is established before the rerate layer.** Per state: `2027 = 2026 × (1+growth)`, then **baseline
-adjustments** (period reductions, e.g. IN −50% Jan–Apr) are applied; the rerate plan is layered on top. The
-**Assumptions & Inputs** tab leads with the baseline: download a CSV template, upload your own 12-month-by-state
-2026 projection, set the runrate growth, manage adjustment rules, and edit the baseline table (full-year totals,
-each month's share, then 2026/2027 monthly dollars — frozen State column, totals row; edit a 2026 total to scale
-its months or any monthly cell directly).
+**Baseline is established before the rerate layer.** Per state and month: `2027[m] = 2026[m] × ratio[m]`,
+where each month's ratio defaults to `1 + growth` but is **editable** on the baseline table — lowering a
+month's % reduces that month (e.g. IN Jan–Apr = 50 ⇒ those months halve). The **Assumptions & Inputs** tab
+leads with the baseline: download a CSV template, upload your own 12-month-by-state 2026 projection, set the
+runrate growth, and edit the baseline table (dollars in **millions**; 2026 & 2027 totals, editable per-month
+2027/2026 %, then 2026/2027 monthly $; frozen State column, totals row). Each state's **rate increase taken**
+is also editable on the per-state plan (defaults to the required increase) and drives its elasticity and uplift.
 
 **Default plan:** only the **top 10 states we are furthest below the Big 6** take the increase (start **4/1/2027**);
-all others off; MD and CA on but start **10/1**.
+all others off (including MD and CA, which carry no meaningful sales in the window).
 
 **Monte Carlo** tab: stochastic stress test — a market-wide impact factor ~ Normal(1, σ) scales every state's
 reduction, and a correlated launch-delay ~ Normal(0, σ) months shifts all start dates. Reports P5/P50/P95,

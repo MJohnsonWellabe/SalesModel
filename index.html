@@ -181,17 +181,12 @@
       <div class="hint" id="baselineStatus"></div>
     </div>
     <div class="panel">
-      <h3>Baseline adjustments (period reductions)</h3>
-      <div class="hint">Reduce a state's sales by a % for a month range (e.g. IN &minus;50% Jan&ndash;Apr). Applied to the
-        2027 baseline before the rerate plan.</div>
-      <table class="elastic" id="baselineAdjTable"></table>
-      <div style="margin-top:12px"><button class="btn secondary" id="addBaselineAdj">+ Add adjustment</button></div>
-    </div>
-    <div class="panel">
       <h3>Edit the baseline</h3>
-      <div class="hint">Full-year 2026 &amp; 2027 totals, then each month's share of the year, then the monthly
-        dollars. Edit a 2026 total (scales its months) or any 2026 monthly amount; 2027 = 2026 &times; (1 + growth)
-        with adjustments. State column is frozen; bottom row totals all states.</div>
+      <div class="hint">All dollars in <strong>millions</strong>. The <strong>2027 / 2026 %</strong> columns are the
+        per-month growth ratio (e.g. 110 = 2027 is 110% of 2026); they default to 1 + growth above but are
+        editable and drive 2027. To cut a state for a period, lower those months' % (e.g. IN Jan&ndash;Apr = 50).
+        Edit a 2026 total (scales its months) or any 2026 monthly amount. State column is frozen; bottom row
+        totals all states.</div>
       <div class="table-scroll" style="max-height:560px"><table class="data freeze" id="baselineTable"></table></div>
     </div>
 

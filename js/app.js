@@ -2,7 +2,7 @@
 (() => {
   'use strict';
 
-  const LS_KEY = 'wellabe_rate_model_v5'; // bumped: no IN default adj, inputs-first layout
+  const LS_KEY = 'wellabe_rate_model_v6'; // bumped: per-month ratios, rate-take, CA/MD off
   const DEFAULTS = {
     rerate: 0.15,        // Big 6 rerate before we act
     benchStat: 'avg',    // avg | median | min  (over the six Big-6 group rates)
@@ -13,9 +13,10 @@
     defaultStart: '2027-04-01', // default rate-increase start date (per-state overridable)
     stateOn: {},         // state -> bool; absent => true (take the increase)
     stateStart: {},      // state -> 'YYYY-MM-DD'; absent => defaultStart
-    // Baseline adjustments establish the 2027 baseline BEFORE the rerate layer:
-    // reduce a state's sales by `red` for months m0..m1 (1-12).
-    baselineAdj: [],
+    rateTake: {},        // state -> rate increase actually taken; absent => required increase
+    // Per-state-per-month 2027/2026 ratio; entry null/absent => 1+growth. Establishes the 2027
+    // baseline (reductions are done by lowering a month's ratio, e.g. IN Jan-Apr = 0.5).
+    growthRatio: {},     // state -> array[12]
     reductionMode: 'count', // 'count' = elasticity cuts policy COUNT, premium/policy rises
                             //   with the rate increase; 'premium' = cuts premium dollars directly
     elastic: [           // {t: required-increase threshold, r: policy-count reduction}
@@ -61,10 +62,7 @@
     for (const s of DATA.salesStates) {
       if (!top10.has(s)) S.stateOn[s] = false; // top 10 stay on (absent => on)
     }
-    for (const s of ['MD', 'CA']) {            // on, but only from Oct 1
-      delete S.stateOn[s];
-      S.stateStart[s] = '2027-10-01';
-    }
+    for (const s of ['MD', 'CA']) S.stateOn[s] = false; // no meaningful sales in window -> off
     saveState();
   }
 
@@ -142,24 +140,20 @@
     for (const st of DATA.salesStates) {
       const sd = DATA.sales[st];
       const rs = rateStates[st];
-      const reqInc = rs ? rs.reqInc : 0;
+      const reqInc = rs ? rs.reqInc : 0;                // required increase to reach target
       const on = S.stateOn[st] !== false;              // default: take the increase
       const start = S.stateStart[st] || S.defaultStart; // YYYY-MM-DD
-      // Policy-count reduction once the increase is fully in effect:
-      const countRed = on ? ((st in S.overrides) ? S.overrides[st] : elasticity(reqInc)) : 0;
-      // Premium uplift on the policies that DO get written (count mode only).
-      const uplift = (on && S.reductionMode === 'count') ? reqInc : 0;
+      // Rate increase actually taken (user-overridable per state); defaults to required.
+      const rateInc = (st in S.rateTake) ? S.rateTake[st] : reqInc;
+      // Policy-count reduction once the increase is fully in effect (elasticity on the TAKEN increase):
+      const countRed = on ? ((st in S.overrides) ? S.overrides[st] : elasticity(rateInc)) : 0;
+      // Premium uplift on the policies that DO get written (count mode only) = the taken increase.
+      const uplift = (on && S.reductionMode === 'count') ? rateInc : 0;
 
       // --- Establish the baseline (before any rerate impact) ---
-      const src = (S.baseline2026 && S.baseline2026[st]) ? S.baseline2026[st] : sd.months;
-      const months26 = src.map(m => m * scale);                 // 2026 baseline by month
-      const est27 = months26.map(m => m * (1 + S.growth));      // 2027 = 2026 x (1+growth)
-      for (const adj of S.baselineAdj) {                        // period reductions (e.g. commission cut)
-        if (adj.state !== st || !(adj.red > 0)) continue;
-        for (let i = (adj.m0 || 1) - 1; i <= (adj.m1 || 12) - 1; i++) {
-          if (i >= 0 && i < 12) est27[i] *= (1 - adj.red);
-        }
-      }
+      // 2026 by month (custom upload or default, scaled); 2027 = 2026 x per-month ratio (default 1+growth).
+      const months26 = base26For(st);
+      const est27 = est27For(st);
       const b26 = months26.reduce((a, b) => a + b, 0);
 
       // --- Layer the rerate impact on top of the established baseline ---
@@ -169,12 +163,12 @@
       });
       const b27 = est27.reduce((a, b) => a + b, 0);             // established 2027 baseline
       const a27 = monthsAdj.reduce((a, b) => a + b, 0);
-      const adjAnnual27 = b26 * (1 + S.growth);                 // 2027 before baseline adjustments
+      const adjAnnual27 = b26 * (1 + S.growth);                 // 2027 at the flat default growth
       sales[st] = {
         baseline2026: b26, baseline2027: b27, adjusted2027: a27,
-        preAdj2027: adjAnnual27,                 // 2027 = 2026x(1+growth), before baseline adj
-        baselineAdjImpact: adjAnnual27 - b27,    // $ removed by baseline adjustments
-        countRed, uplift,
+        preAdj2027: adjAnnual27,                 // 2027 at flat growth, before per-month ratio edits
+        baselineAdjImpact: adjAnnual27 - b27,    // $ removed by per-month ratio reductions
+        countRed, uplift, rateInc,
         affFrom: startMonthNum(start, on),       // first 2027 month the rerate hits (1..12, 99=never)
         effReduction: b27 ? (b27 - a27) / b27 : 0, // rerate reduction vs established baseline
         reqInc, loss: b27 - a27, on, start,
@@ -545,7 +539,7 @@
         <td class="muted">${x.on ? fmtStart(x.start) : '—'}</td>
         <td>${F.money(x.baseline2027)}</td>
         <td class="${x.on && x.countRed > 0 ? 'neg' : 'muted'}">${x.on ? F.pct1(x.countRed) : '—'}</td>
-        <td class="${countMode && x.on && x.uplift > 0 ? 'pos' : 'muted'}">${countMode && x.on ? '+' + F.pct1(x.uplift) : '—'}</td>
+        <td class="${x.on && x.rateInc > 0 ? 'pos' : 'muted'}">${x.on ? '+' + F.pct1(x.rateInc) : '—'}</td>
         <td class="${x.effReduction > 0 ? 'neg' : (x.effReduction < 0 ? 'pos' : 'muted')}">${F.pct1(x.effReduction)}</td>
         <td>${F.money(x.adjusted2027)}</td>
         <td>${F.lossGain(x.loss)}</td></tr>`; }).join('') +
@@ -690,19 +684,21 @@
     const sts = DATA.salesStates.filter(s => DATA.sales[s].annual > 0);
     t.innerHTML = `<thead><tr>
       <th class="left">State</th><th>Take<br>increase</th><th class="left">Start date</th>
-      <th>Rate&nbsp;+%</th><th>Count&nbsp;−%<br>override</th><th>Net&nbsp;−%<br>(timed)</th><th>2027&nbsp;loss / gain</th>
+      <th>Rate&nbsp;+%<br>(take)</th><th>Count&nbsp;−%<br>override</th><th>Net&nbsp;−%<br>(timed)</th><th>2027&nbsp;loss / gain</th>
       </tr></thead><tbody>` +
       sts.map(s => {
         const x = m.sales[s], rs = m.rateStates[s];
         const on = S.stateOn[s] !== false;
         const start = S.stateStart[s] || S.defaultStart;
         const ov = s in S.overrides ? Math.round(S.overrides[s] * 100) : '';
+        const rt = s in S.rateTake ? Math.round(S.rateTake[s] * 100) : '';
+        const reqPh = rs ? Math.round(x.reqInc * 100) : 0; // required increase as placeholder default
         return `<tr>
           <td class="left">${s}${SELL.has(s) ? '<span class="tag-sell">sell</span>' : ''}${rs ? '' : ' <span class="muted">(no rate data)</span>'}</td>
           <td><input type="checkbox" data-st="${s}" data-f="on" ${on ? 'checked' : ''}></td>
           <td class="left"><input type="date" data-st="${s}" data-f="start" value="${start}" ${on ? '' : 'disabled'} style="min-width:140px"></td>
-          <td class="${x.reqInc > 0.2 ? 'neg' : ''}">${rs ? F.pct1(x.reqInc) : '—'}</td>
-          <td><input type="number" step="1" min="0" max="100" placeholder="auto" data-st="${s}" data-f="ov" value="${ov}" style="min-width:70px" ${on ? '' : 'disabled'}>%</td>
+          <td><input type="number" step="1" min="0" data-st="${s}" data-f="rt" value="${rt}" placeholder="${reqPh}" style="width:64px" ${on ? '' : 'disabled'}>%</td>
+          <td><input type="number" step="1" min="0" max="100" placeholder="auto" data-st="${s}" data-f="ov" value="${ov}" style="width:64px" ${on ? '' : 'disabled'}>%</td>
           <td class="${x.effReduction > 0 ? 'neg' : (x.effReduction < 0 ? 'pos' : 'muted')}">${F.pct1(x.effReduction)}</td>
           <td>${F.lossGain(x.loss)}</td></tr>`;
       }).join('') + '</tbody>';
@@ -715,6 +711,10 @@
         else if (f === 'ov') {
           if (inp.value === '') delete S.overrides[st];
           else S.overrides[st] = Math.max(0, Math.min(1, (+inp.value) / 100));
+        }
+        else if (f === 'rt') {
+          if (inp.value === '') delete S.rateTake[st];
+          else S.rateTake[st] = Math.max(0, (+inp.value) / 100);
         }
         commit();
       };
@@ -758,14 +758,15 @@
     DATA.salesStates.forEach(s => { S.baseline2026[s] = base26For(s); });
     S.baselineTotal = null;
   }
-  // 2027 established baseline months for a state (2026 × (1+growth), then baseline adjustments).
+  // Per-month 2027/2026 ratio; an explicit value wins, else the flat 1+growth default.
+  function ratioFor(st, m) {
+    const arr = S.growthRatio[st];
+    const r = arr ? arr[m] : null;
+    return (r == null) ? (1 + S.growth) : r;
+  }
+  // 2027 established baseline months for a state = 2026[m] × per-month ratio.
   function est27For(st) {
-    const e = base26For(st).map(v => v * (1 + S.growth));
-    for (const adj of S.baselineAdj) {
-      if (adj.state !== st || !(adj.red > 0)) continue;
-      for (let i = (adj.m0 || 1) - 1; i <= (adj.m1 || 12) - 1; i++) if (i >= 0 && i < 12) e[i] *= (1 - adj.red);
-    }
-    return e;
+    return base26For(st).map((v, m) => v * ratioFor(st, m));
   }
 
   function buildBaselineUI() {
@@ -800,41 +801,15 @@
     };
     const g2 = document.getElementById('inGrowth2');
     g2.oninput = () => { S.growth = +g2.value; commit(); };
-    buildBaselineAdjTable();
     buildBaselineTable();
-  }
-
-  function buildBaselineAdjTable() {
-    const t = document.getElementById('baselineAdjTable');
-    if (!t) return;
-    const opts = ['', ...DATA.salesStates].map(s => `<option ${''}>${s}</option>`).join('');
-    t.innerHTML = `<thead><tr><th>State</th><th>Reduce %</th><th>From</th><th>To</th><th></th></tr></thead><tbody>` +
-      S.baselineAdj.map((a, i) => `<tr>
-        <td><select data-i="${i}" data-f="state">${['', ...DATA.salesStates].map(s => `<option ${s === a.state ? 'selected' : ''}>${s}</option>`).join('')}</select></td>
-        <td><input type="number" min="0" max="100" step="1" data-i="${i}" data-f="red" value="${Math.round(a.red * 100)}" style="width:70px">%</td>
-        <td><select data-i="${i}" data-f="m0">${MOS.map((mo, k) => `<option value="${k + 1}" ${k + 1 === a.m0 ? 'selected' : ''}>${mo}</option>`).join('')}</select></td>
-        <td><select data-i="${i}" data-f="m1">${MOS.map((mo, k) => `<option value="${k + 1}" ${k + 1 === a.m1 ? 'selected' : ''}>${mo}</option>`).join('')}</select></td>
-        <td><button class="btn secondary" data-del="${i}" style="padding:3px 9px">×</button></td></tr>`).join('') + '</tbody>';
-    t.querySelectorAll('select,input').forEach(el => el.onchange = () => {
-      const a = S.baselineAdj[+el.dataset.i], f = el.dataset.f;
-      if (f === 'red') a.red = clamp01((+el.value) / 100);
-      else if (f === 'm0' || f === 'm1') a[f] = +el.value;
-      else a[f] = el.value;
-      buildBaselineAdjTable(); commit();
-    });
-    t.querySelectorAll('button[data-del]').forEach(b => b.onclick = () => {
-      S.baselineAdj.splice(+b.dataset.del, 1); buildBaselineAdjTable(); commit();
-    });
-    document.getElementById('addBaselineAdj').onclick = () => {
-      S.baselineAdj.push({ state: sts0(), red: 0.25, m0: 1, m1: 12 }); buildBaselineAdjTable(); commit();
-    };
-    function sts0() { return DATA.salesStates[0]; }
   }
 
   // Editable baseline: totals, monthly ratios, then 2026 (input) & 2027 (computed) amounts.
   // Frozen State column + a totals row. Cell refs cached for fast refresh.
   let BL_CELLS = null;
   const sumArr = a => a.reduce((p, c) => p + c, 0);
+  const toM = v => (v / 1e6).toFixed(3);          // dollars -> millions string
+  const fromM = x => (+x || 0) * 1e6;             // millions string -> dollars
   function blStatusCustom() {
     const st = document.getElementById('baselineStatus');
     if (st) st.textContent = 'Using a custom uploaded/edited baseline (the 2026 total scale slider is disabled).';
@@ -845,14 +820,14 @@
     const sts = DATA.salesStates.filter(s => DATA.sales[s].annual > 0);
     const monthHdr = MOS.map(m => `<th>${m}</th>`).join('');
     t.innerHTML = `<thead>
-      <tr><th class="left" rowspan="2">State</th><th rowspan="2">2026<br>total</th><th rowspan="2">2027<br>total</th>
-        <th colspan="12">Monthly share %</th><th colspan="12">2026 monthly $</th><th colspan="12">2027 monthly $</th></tr>
+      <tr><th class="left" rowspan="2">State</th><th rowspan="2">2026<br>total $M</th><th rowspan="2">2027<br>total $M</th>
+        <th colspan="12">2027 / 2026 % (editable)</th><th colspan="12">2026 monthly $M</th><th colspan="12">2027 monthly $M</th></tr>
       <tr>${monthHdr}${monthHdr}${monthHdr}</tr></thead><tbody>` +
       sts.map(s => `<tr data-row="${s}"><td class="left">${s}</td>
-        <td><input type="number" data-st="${s}" data-f="tot" value="0" style="width:84px"></td>
+        <td><input type="number" step="0.001" data-st="${s}" data-f="tot" value="0" style="width:78px"></td>
         <td data-c="tot27">—</td>
-        ${MOS.map((m, i) => `<td data-c="ratio" data-i="${i}" class="muted">—</td>`).join('')}
-        ${MOS.map((m, i) => `<td><input type="number" data-st="${s}" data-i="${i}" value="0" style="width:72px"></td>`).join('')}
+        ${MOS.map((m, i) => `<td><input type="number" step="1" data-st="${s}" data-f="ratio" data-i="${i}" value="" style="width:58px"></td>`).join('')}
+        ${MOS.map((m, i) => `<td><input type="number" step="0.001" data-st="${s}" data-i="${i}" value="0" style="width:66px"></td>`).join('')}
         ${MOS.map((m, i) => `<td data-c="amt27" data-i="${i}">—</td>`).join('')}
       </tr>`).join('') +
       `<tr data-row="__total" style="font-weight:700"><td class="left">TOTAL</td>
@@ -869,8 +844,8 @@
       BL_CELLS.rows[s] = {
         totIn: tr.querySelector('input[data-f="tot"]'),
         tot27: tr.querySelector('[data-c="tot27"]'),
-        ratio: [...tr.querySelectorAll('[data-c="ratio"]')],
-        amt26: [...tr.querySelectorAll('input[data-i]')],
+        ratio: [...tr.querySelectorAll('input[data-f="ratio"]')],
+        amt26: [...tr.querySelectorAll('input[data-i]:not([data-f])')],
         amt27: [...tr.querySelectorAll('[data-c="amt27"]')],
       };
     }
@@ -881,45 +856,58 @@
       amt26: [...tr.querySelectorAll('[data-c="tamt26"]')], amt27: [...tr.querySelectorAll('[data-c="tamt27"]')],
     };
 
-    // seed the editable 2026 inputs with current values
-    for (const s of sts) { const b = base26For(s); BL_CELLS.rows[s].amt26.forEach((el, i) => el.value = Math.round(b[i])); }
+    // seed editable 2026 inputs (in $M)
+    for (const s of sts) { const b = base26For(s); BL_CELLS.rows[s].amt26.forEach((el, i) => el.value = toM(b[i])); }
 
-    // editable 2026 monthly amounts
-    t.querySelectorAll('input[data-i]').forEach(inp => inp.onchange = () => {
+    // editable 2026 monthly amounts ($M)
+    BL_CELLS && sts.forEach(s => BL_CELLS.rows[s].amt26.forEach(inp => inp.onchange = () => {
       ensureCustomBaseline();
-      S.baseline2026[inp.dataset.st][+inp.dataset.i] = +inp.value || 0;
+      S.baseline2026[s][+inp.dataset.i] = fromM(inp.value);
       blStatusCustom(); commit();
-    });
-    // editable 2026 total -> scale the state's months proportionally
-    t.querySelectorAll('input[data-f="tot"]').forEach(inp => inp.onchange = () => {
+    }));
+    // editable 2026 total ($M) -> scale the state's months proportionally
+    sts.forEach(s => { BL_CELLS.rows[s].totIn.onchange = () => {
       ensureCustomBaseline();
-      const s = inp.dataset.st, target = +inp.value || 0;
+      const target = fromM(BL_CELLS.rows[s].totIn.value);
       const cur = S.baseline2026[s], old = sumArr(cur);
       if (old > 0) cur.forEach((v, i) => cur[i] = v * target / old);
       else cur.forEach((_, i) => cur[i] = target / 12);
-      BL_CELLS.rows[s].amt26.forEach((el, i) => el.value = Math.round(cur[i]));
+      BL_CELLS.rows[s].amt26.forEach((el, i) => el.value = toM(cur[i]));
       blStatusCustom(); commit();
-    });
+    }; });
+    // editable per-month 2027/2026 ratio (%) -> drives 2027
+    sts.forEach(s => BL_CELLS.rows[s].ratio.forEach(inp => inp.onchange = () => {
+      const i = +inp.dataset.i;
+      if (inp.value === '') { if (S.growthRatio[s]) S.growthRatio[s][i] = null; }
+      else { if (!S.growthRatio[s]) S.growthRatio[s] = Array(12).fill(null); S.growthRatio[s][i] = (+inp.value) / 100; }
+      commit();
+    }));
     refreshBaseline2027();
   }
 
-  // Update totals, ratios and the computed 2027 amounts (cheap; called every recompute).
+  // Update totals, ratios (defaults) and the computed 2027 amounts (cheap; every recompute).
   function refreshBaseline2027() {
     if (!BL_CELLS) return;
     const sts = Object.keys(BL_CELLS.rows);
     const tot26 = Array(12).fill(0), tot27 = Array(12).fill(0);
     for (const s of sts) {
       const r = BL_CELLS.rows[s], b = base26For(s), e = est27For(s);
-      const s26 = sumArr(b), s27 = sumArr(e);
-      if (document.activeElement !== r.totIn) r.totIn.value = Math.round(s26);
-      r.tot27.textContent = F.moneyShort(s27);
-      b.forEach((v, i) => { r.ratio[i].textContent = s26 ? (v / s26 * 100).toFixed(1) + '%' : '—'; tot26[i] += v; });
-      e.forEach((v, i) => { r.amt27[i].textContent = F.moneyShort(v); tot27[i] += v; });
+      if (document.activeElement !== r.totIn) r.totIn.value = toM(sumArr(b));
+      r.tot27.textContent = toM(sumArr(e));
+      b.forEach((v, i) => { tot26[i] += v; });
+      e.forEach((v, i) => { r.amt27[i].textContent = toM(v); tot27[i] += v; });
+      // ratio inputs: show explicit override, else placeholder = the live default (1+growth)
+      r.ratio.forEach((inp, i) => {
+        if (document.activeElement === inp) return;
+        const arr = S.growthRatio[s], ov = arr ? arr[i] : null;
+        inp.placeholder = ((1 + S.growth) * 100).toFixed(0);
+        inp.value = (ov == null) ? '' : (ov * 100).toFixed(0);
+      });
     }
     const T = BL_CELLS.total, s26 = sumArr(tot26), s27 = sumArr(tot27);
-    T.tot26.textContent = F.moneyShort(s26); T.tot27.textContent = F.moneyShort(s27);
-    tot26.forEach((v, i) => { T.ratio[i].textContent = s26 ? (v / s26 * 100).toFixed(1) + '%' : '—'; T.amt26[i].textContent = F.moneyShort(v); });
-    tot27.forEach((v, i) => T.amt27[i].textContent = F.moneyShort(v));
+    T.tot26.textContent = toM(s26); T.tot27.textContent = toM(s27);
+    tot26.forEach((v, i) => { T.ratio[i].textContent = tot26[i] ? (tot27[i] / tot26[i] * 100).toFixed(0) + '%' : '—'; T.amt26[i].textContent = toM(v); });
+    tot27.forEach((v, i) => T.amt27[i].textContent = toM(v));
   }
 
   // ---------- Monte Carlo tab ----------
