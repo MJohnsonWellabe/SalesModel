@@ -2,28 +2,32 @@
 (() => {
   'use strict';
 
-  const LS_KEY = 'wellabe_rate_model_v3'; // bumped: 4/1 default start, top-10-on default, commission cuts
+  const LS_KEY = 'wellabe_rate_model_v4'; // bumped: baseline adjustments, lower elasticity, MC
   const DEFAULTS = {
     rerate: 0.15,        // Big 6 rerate before we act
     benchStat: 'avg',    // avg | median | min  (over the six Big-6 group rates)
     offset: -0.05,       // target position vs Big 6 post-rerate benchmark
-    growth: 0.0,         // 2027 growth from 2026 baseline
+    growth: 0.0,         // 2027 runrate growth from 2026 baseline
     baselineTotal: null, // 2026 baseline $ total (null => use data.json default)
+    baseline2026: null,  // optional uploaded 2026 monthly by state {ST:[12]}; null => data.json
     defaultStart: '2027-04-01', // default rate-increase start date (per-state overridable)
     stateOn: {},         // state -> bool; absent => true (take the increase)
     stateStart: {},      // state -> 'YYYY-MM-DD'; absent => defaultStart
-    commissionCut: { IN: 0.5 }, // state -> 2027 sales reduction from commission cuts (full year)
+    // Baseline adjustments establish the 2027 baseline BEFORE the rerate layer:
+    // reduce a state's sales by `red` for months m0..m1 (1-12). Default: IN commission cut.
+    baselineAdj: [{ state: 'IN', red: 0.5, m0: 1, m1: 12 }],
     reductionMode: 'count', // 'count' = elasticity cuts policy COUNT, premium/policy rises
                             //   with the rate increase; 'premium' = cuts premium dollars directly
     elastic: [           // {t: required-increase threshold, r: policy-count reduction}
       { t: 0.05, r: 0.05 },
-      { t: 0.10, r: 0.20 },
-      { t: 0.15, r: 0.35 },
-      { t: 0.20, r: 0.50 },
-      { t: 0.30, r: 0.65 },
-      { t: 0.40, r: 0.80 },
+      { t: 0.10, r: 0.15 },
+      { t: 0.15, r: 0.30 },
+      { t: 0.20, r: 0.40 },
+      { t: 0.30, r: 0.60 },
+      { t: 0.40, r: 0.70 },
     ],
     overrides: {},       // state -> count-reduction fraction
+    mc: { impactSd: 0.20, delaySd: 1.0, trials: 2000 }, // Monte Carlo params
   };
 
   let DATA = null;       // loaded data.json
@@ -78,6 +82,14 @@
   }
 
   const PROJ_YEAR = 2027; // the projection window we reduce
+  // First PROJ_YEAR month (1..12) the increase affects; 1 if already in effect, 99 if off/after.
+  function startMonthNum(startStr, on) {
+    if (!on) return 99;
+    const [sy, sm] = String(startStr).split('-').map(Number);
+    if (!sy || sy < PROJ_YEAR) return 1;
+    if (sy > PROJ_YEAR) return 99;
+    return sm;
+  }
   // Is PROJ_YEAR month `monthIdx` (0..11) on/after the rate-increase start date?
   function affectedFrac(startStr, monthIdx) {
     const [sy, sm] = String(startStr).split('-').map(Number);
@@ -137,28 +149,36 @@
       const countRed = on ? ((st in S.overrides) ? S.overrides[st] : elasticity(reqInc)) : 0;
       // Premium uplift on the policies that DO get written (count mode only).
       const uplift = (on && S.reductionMode === 'count') ? reqInc : 0;
-      // Commission-cut volume reduction applied across all of 2027 (e.g. IN -50%).
-      const comm = S.commissionCut[st] || 0;
-      const commFactor = 1 - comm;
-      const b26 = sd.annual * scale;
-      const months26 = sd.months.map(m => m * scale);          // 2026 baseline by month
-      const monthsBase = sd.months.map(m => m * scale * (1 + S.growth)); // 2027 baseline by month
-      // 2027 by month: commission cut all year, plus (for months on/after start)
-      // fewer policies (1-countRed) each at higher premium (1+uplift).
-      const monthsAdj = monthsBase.map((v, i) => {
+
+      // --- Establish the baseline (before any rerate impact) ---
+      const src = (S.baseline2026 && S.baseline2026[st]) ? S.baseline2026[st] : sd.months;
+      const months26 = src.map(m => m * scale);                 // 2026 baseline by month
+      const est27 = months26.map(m => m * (1 + S.growth));      // 2027 = 2026 x (1+growth)
+      for (const adj of S.baselineAdj) {                        // period reductions (e.g. commission cut)
+        if (adj.state !== st || !(adj.red > 0)) continue;
+        for (let i = (adj.m0 || 1) - 1; i <= (adj.m1 || 12) - 1; i++) {
+          if (i >= 0 && i < 12) est27[i] *= (1 - adj.red);
+        }
+      }
+      const b26 = months26.reduce((a, b) => a + b, 0);
+
+      // --- Layer the rerate impact on top of the established baseline ---
+      const monthsAdj = est27.map((v, i) => {
         const a = affectedFrac(start, i);
-        return v * commFactor * (1 - countRed * a) * (1 + uplift * a);
+        return v * (1 - countRed * a) * (1 + uplift * a);
       });
-      const b27 = monthsBase.reduce((a, b) => a + b, 0);
+      const b27 = est27.reduce((a, b) => a + b, 0);             // established 2027 baseline
       const a27 = monthsAdj.reduce((a, b) => a + b, 0);
+      const adjAnnual27 = b26 * (1 + S.growth);                 // 2027 before baseline adjustments
       sales[st] = {
         baseline2026: b26, baseline2027: b27, adjusted2027: a27,
-        countRed,                        // policy-count reduction (full effect)
-        uplift,                          // premium uplift per remaining policy
-        comm,                            // commission-cut reduction (full year 2027)
-        effReduction: b27 ? (b27 - a27) / b27 : 0, // net reduction in PROJ_YEAR after timing
+        preAdj2027: adjAnnual27,                 // 2027 = 2026x(1+growth), before baseline adj
+        baselineAdjImpact: adjAnnual27 - b27,    // $ removed by baseline adjustments
+        countRed, uplift,
+        affFrom: startMonthNum(start, on),       // first 2027 month the rerate hits (1..12, 99=never)
+        effReduction: b27 ? (b27 - a27) / b27 : 0, // rerate reduction vs established baseline
         reqInc, loss: b27 - a27, on, start,
-        hasRate: !!rs, months26, months: monthsBase, monthsAdj,
+        hasRate: !!rs, months26, months: est27, monthsAdj,
       };
       baseline2026 += b26; base2027 += b27; adj2027 += a27;
     }
@@ -216,6 +236,29 @@
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
   }
+  function downloadJSON(filename, obj) {
+    const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+  function readFile(input, cb) {
+    const f = input.files && input.files[0];
+    if (!f) return;
+    const r = new FileReader();
+    r.onload = () => { try { cb(r.result); } catch (e) { alert('Could not read file: ' + e.message); } input.value = ''; };
+    r.readAsText(f);
+  }
+  // Standard-normal sampler (Box–Muller).
+  function randn() {
+    let u = 0, v = 0;
+    while (u === 0) u = Math.random();
+    while (v === 0) v = Math.random();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  }
+  const clamp01 = x => Math.max(0, Math.min(1, x));
 
   // ---------- rendering ----------
   function renderAll() {
@@ -225,6 +268,7 @@
     renderIncreases();
     renderSales();
     renderStatePlan();
+    refreshBaseline2027();
     syncInputWidgets();
   }
 
@@ -257,18 +301,19 @@
     const sts = [...DATA.salesStates].filter(s => DATA.sales[s].annual > 0)
       .sort((a, b) => m.sales[b].baseline2027 - m.sales[a].baseline2027);
     const header = ['State', 'Gap vs Big6 %', 'Req increase %', 'Take', 'Start',
-      'Comm cut %', '2027 baseline', '2027 adjusted', 'Net change %', 'Loss/gain'];
+      'Baseline adj %', '2027 baseline', '2027 adjusted', 'Rerate net %', 'Loss/gain'];
     const rows = sts.map(s => {
       const x = m.sales[s], rs = m.rateStates[s];
+      const badjPct = x.preAdj2027 ? x.baselineAdjImpact / x.preAdj2027 : 0;
       return {
         s, gap: rs ? rs.gapToday : null, req: rs ? x.reqInc : null,
-        on: x.on, start: x.on ? x.start : '', comm: x.comm,
+        on: x.on, start: x.on ? x.start : '', badj: badjPct,
         base: x.baseline2027, adj: x.adjusted2027, net: x.effReduction, loss: x.loss,
       };
     });
     SUMMARY_EXPORT = [header, ...rows.map(r => [
       r.s, r.gap == null ? '' : (r.gap * 100).toFixed(1), r.req == null ? '' : (r.req * 100).toFixed(1),
-      r.on ? 'Yes' : 'No', r.start, (r.comm * 100).toFixed(0),
+      r.on ? 'Yes' : 'No', r.start, (r.badj * 100).toFixed(0),
       Math.round(r.base), Math.round(r.adj), (r.net * 100).toFixed(1), Math.round(-r.loss),
     ]), ['TOTAL', '', '', '', '', '', Math.round(m.base2027), Math.round(m.adj2027),
       (m.lossPct * 100).toFixed(1), Math.round(-m.totalLoss)]];
@@ -276,7 +321,7 @@
     const tbl = document.getElementById('summaryTable');
     tbl.innerHTML = `<thead><tr>
       <th class="left">State</th><th>Gap vs Big6</th><th>Req +%</th><th>Take</th><th class="left">Start</th>
-      <th>Comm −%</th><th>2027 baseline</th><th>2027 adjusted</th><th>Net Δ%</th><th>Loss / gain</th>
+      <th>Baseline adj</th><th>2027 baseline</th><th>2027 adjusted</th><th>Rerate Δ%</th><th>Loss / gain</th>
       </tr></thead><tbody>` +
       rows.map(r => `<tr>
         <td class="left">${r.s}</td>
@@ -284,7 +329,7 @@
         <td>${r.req == null ? '—' : F.pct1(r.req)}</td>
         <td class="${r.on ? '' : 'muted'}">${r.on ? '✓' : '—'}</td>
         <td class="left muted">${r.on ? fmtStart(r.start) : '—'}</td>
-        <td class="${r.comm > 0 ? 'neg' : 'muted'}">${r.comm > 0 ? F.pct1(r.comm) : '—'}</td>
+        <td class="${r.badj > 0 ? 'neg' : 'muted'}">${r.badj > 0 ? '−' + F.pct1(r.badj) : '—'}</td>
         <td>${F.money(r.base)}</td><td>${F.money(r.adj)}</td>
         <td class="${r.net > 0 ? 'neg' : (r.net < 0 ? 'pos' : 'muted')}">${F.pct1(r.net)}</td>
         <td>${F.lossGain(r.loss)}</td></tr>`).join('') +
@@ -589,9 +634,34 @@
       DATA.salesStates.forEach(s => { S.stateOn[s] = false; }); commit();
     };
     document.getElementById('resetBtn').onclick = () => {
-      S = structuredClone(DEFAULTS); applyDefaultPlan(); buildElasticTable(); renderAll();
+      S = structuredClone(DEFAULTS); applyDefaultPlan(); buildElasticTable(); buildBaselineUI(); renderAll();
     };
+    // Save / share model
+    document.getElementById('exportModel').onclick = () => downloadJSON('wellabe_model.json', S);
+    document.getElementById('importModel').onchange = (e) => readFile(e.target, txt => {
+      const obj = JSON.parse(txt);
+      S = Object.assign(structuredClone(DEFAULTS), obj);
+      saveState(); buildElasticTable(); buildBaselineUI(); renderAll();
+    });
+    document.getElementById('exportDates').onclick = () => {
+      const rows = [['State', 'Take', 'StartDate']];
+      DATA.salesStates.forEach(s => rows.push([s, S.stateOn[s] !== false ? 'Yes' : 'No',
+        S.stateStart[s] || S.defaultStart]));
+      downloadCSV('wellabe_start_dates.csv', rows);
+    };
+    document.getElementById('importDates').onchange = (e) => readFile(e.target, txt => {
+      const lines = txt.trim().split(/\r?\n/).slice(1);
+      lines.forEach(ln => {
+        const [st, take, date] = ln.split(',').map(x => (x || '').trim());
+        if (!st || !DATA.sales[st]) return;
+        if (/^no$/i.test(take)) S.stateOn[st] = false; else delete S.stateOn[st];
+        if (/^\d{4}-\d{2}-\d{2}$/.test(date)) S.stateStart[st] = date;
+      });
+      commit();
+    });
     buildElasticTable();
+    buildBaselineUI();
+    buildMonteCarlo();
   }
 
   function buildElasticTable() {
@@ -621,21 +691,19 @@
     const sts = DATA.salesStates.filter(s => DATA.sales[s].annual > 0);
     t.innerHTML = `<thead><tr>
       <th class="left">State</th><th>Take<br>increase</th><th class="left">Start date</th>
-      <th>Rate&nbsp;+%</th><th>Count&nbsp;−%<br>override</th><th>Comm<br>cut&nbsp;%</th><th>Net&nbsp;−%<br>(timed)</th><th>2027&nbsp;loss / gain</th>
+      <th>Rate&nbsp;+%</th><th>Count&nbsp;−%<br>override</th><th>Net&nbsp;−%<br>(timed)</th><th>2027&nbsp;loss / gain</th>
       </tr></thead><tbody>` +
       sts.map(s => {
         const x = m.sales[s], rs = m.rateStates[s];
         const on = S.stateOn[s] !== false;
         const start = S.stateStart[s] || S.defaultStart;
         const ov = s in S.overrides ? Math.round(S.overrides[s] * 100) : '';
-        const cc = s in S.commissionCut ? Math.round(S.commissionCut[s] * 100) : '';
         return `<tr>
           <td class="left">${s}${SELL.has(s) ? '<span class="tag-sell">sell</span>' : ''}${rs ? '' : ' <span class="muted">(no rate data)</span>'}</td>
           <td><input type="checkbox" data-st="${s}" data-f="on" ${on ? 'checked' : ''}></td>
           <td class="left"><input type="date" data-st="${s}" data-f="start" value="${start}" ${on ? '' : 'disabled'} style="min-width:140px"></td>
           <td class="${x.reqInc > 0.2 ? 'neg' : ''}">${rs ? F.pct1(x.reqInc) : '—'}</td>
           <td><input type="number" step="1" min="0" max="100" placeholder="auto" data-st="${s}" data-f="ov" value="${ov}" style="min-width:70px" ${on ? '' : 'disabled'}>%</td>
-          <td><input type="number" step="1" min="0" max="100" placeholder="0" data-st="${s}" data-f="cc" value="${cc}" style="min-width:60px">%</td>
           <td class="${x.effReduction > 0 ? 'neg' : (x.effReduction < 0 ? 'pos' : 'muted')}">${F.pct1(x.effReduction)}</td>
           <td>${F.lossGain(x.loss)}</td></tr>`;
       }).join('') + '</tbody>';
@@ -648,10 +716,6 @@
         else if (f === 'ov') {
           if (inp.value === '') delete S.overrides[st];
           else S.overrides[st] = Math.max(0, Math.min(1, (+inp.value) / 100));
-        }
-        else if (f === 'cc') {
-          if (inp.value === '' || +inp.value === 0) delete S.commissionCut[st];
-          else S.commissionCut[st] = Math.max(0, Math.min(1, (+inp.value) / 100));
         }
         commit();
       };
@@ -677,6 +741,206 @@
     const isCount = S.reductionMode === 'count';
     document.getElementById('elasticWhat').textContent = isCount ? 'policy-count' : 'premium';
     document.getElementById('elasticWhat2').textContent = isCount ? 'policy count' : 'premium';
+    const g2 = document.getElementById('inGrowth2');
+    if (g2) { g2.value = S.growth; document.getElementById('inGrowth2Val').textContent = F.signpct(S.growth); }
+  }
+
+  // ---------- Baseline tab ----------
+  const MOS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const scaleNow = () => (S.baselineTotal && DATA.baselineTotal) ? S.baselineTotal / DATA.baselineTotal : 1;
+  // Source-of-truth 2026 monthly for a state (custom if uploaded/edited, else default×scale).
+  function base26For(st) {
+    if (S.baseline2026 && S.baseline2026[st]) return S.baseline2026[st].slice();
+    const sc = scaleNow();
+    return (DATA.sales[st] ? DATA.sales[st].months : Array(12).fill(0)).map(v => v * sc);
+  }
+  // Once the user edits/uploads, take ownership: materialize all states, drop the scale slider.
+  function ensureCustomBaseline() {
+    if (S.baseline2026) return;
+    S.baseline2026 = {};
+    DATA.salesStates.forEach(s => { S.baseline2026[s] = base26For(s); });
+    S.baselineTotal = null;
+  }
+  // 2027 established baseline months for a state (2026 × (1+growth), then baseline adjustments).
+  function est27For(st) {
+    const e = base26For(st).map(v => v * (1 + S.growth));
+    for (const adj of S.baselineAdj) {
+      if (adj.state !== st || !(adj.red > 0)) continue;
+      for (let i = (adj.m0 || 1) - 1; i <= (adj.m1 || 12) - 1; i++) if (i >= 0 && i < 12) e[i] *= (1 - adj.red);
+    }
+    return e;
+  }
+
+  function buildBaselineUI() {
+    const sts = DATA.salesStates.filter(s => DATA.sales[s].annual > 0);
+    // status
+    const status = document.getElementById('baselineStatus');
+    status.textContent = S.baseline2026
+      ? 'Using a custom uploaded/edited baseline (the 2026 total scale slider is disabled).'
+      : 'Using the default 2026 projection. Upload or edit any cell to take ownership.';
+    // template + upload + reset + growth
+    document.getElementById('dlTemplate').onclick = () => {
+      const rows = [['State', ...MOS]];
+      sts.forEach(s => rows.push([s, ...base26For(s).map(v => Math.round(v))]));
+      downloadCSV('wellabe_baseline_2026_template.csv', rows);
+    };
+    document.getElementById('upBaseline').onchange = (e) => readFile(e.target, txt => {
+      const lines = txt.trim().split(/\r?\n/);
+      const out = {}; let n = 0;
+      lines.slice(1).forEach(ln => {
+        const parts = ln.split(',').map(x => (x || '').trim());
+        const st = parts[0]; if (!st || !DATA.sales[st]) return;
+        const mv = parts.slice(1, 13).map(x => +x || 0);
+        if (mv.length === 12) { out[st] = mv; n++; }
+      });
+      if (!n) { alert('No valid rows found. Expect: State,Jan,…,Dec'); return; }
+      sts.forEach(s => { if (!out[s]) out[s] = base26For(s); }); // keep states not in file
+      S.baseline2026 = out; S.baselineTotal = null;
+      buildBaselineTable(); buildBaselineUI(); commit();
+    });
+    document.getElementById('resetBaseline').onclick = () => {
+      S.baseline2026 = null; buildBaselineTable(); buildBaselineUI(); commit();
+    };
+    const g2 = document.getElementById('inGrowth2');
+    g2.oninput = () => { S.growth = +g2.value; commit(); };
+    buildBaselineAdjTable();
+    buildBaselineTable();
+  }
+
+  function buildBaselineAdjTable() {
+    const t = document.getElementById('baselineAdjTable');
+    if (!t) return;
+    const opts = ['', ...DATA.salesStates].map(s => `<option ${''}>${s}</option>`).join('');
+    t.innerHTML = `<thead><tr><th>State</th><th>Reduce %</th><th>From</th><th>To</th><th></th></tr></thead><tbody>` +
+      S.baselineAdj.map((a, i) => `<tr>
+        <td><select data-i="${i}" data-f="state">${['', ...DATA.salesStates].map(s => `<option ${s === a.state ? 'selected' : ''}>${s}</option>`).join('')}</select></td>
+        <td><input type="number" min="0" max="100" step="1" data-i="${i}" data-f="red" value="${Math.round(a.red * 100)}" style="width:70px">%</td>
+        <td><select data-i="${i}" data-f="m0">${MOS.map((mo, k) => `<option value="${k + 1}" ${k + 1 === a.m0 ? 'selected' : ''}>${mo}</option>`).join('')}</select></td>
+        <td><select data-i="${i}" data-f="m1">${MOS.map((mo, k) => `<option value="${k + 1}" ${k + 1 === a.m1 ? 'selected' : ''}>${mo}</option>`).join('')}</select></td>
+        <td><button class="btn secondary" data-del="${i}" style="padding:3px 9px">×</button></td></tr>`).join('') + '</tbody>';
+    t.querySelectorAll('select,input').forEach(el => el.onchange = () => {
+      const a = S.baselineAdj[+el.dataset.i], f = el.dataset.f;
+      if (f === 'red') a.red = clamp01((+el.value) / 100);
+      else if (f === 'm0' || f === 'm1') a[f] = +el.value;
+      else a[f] = el.value;
+      buildBaselineAdjTable(); commit();
+    });
+    t.querySelectorAll('button[data-del]').forEach(b => b.onclick = () => {
+      S.baselineAdj.splice(+b.dataset.del, 1); buildBaselineAdjTable(); commit();
+    });
+    document.getElementById('addBaselineAdj').onclick = () => {
+      S.baselineAdj.push({ state: sts0(), red: 0.25, m0: 1, m1: 12 }); buildBaselineAdjTable(); commit();
+    };
+    function sts0() { return DATA.salesStates[0]; }
+  }
+
+  // 24-col editable baseline table (2026 inputs + computed 2027); built on load/upload/reset.
+  function buildBaselineTable() {
+    const t = document.getElementById('baselineTable');
+    if (!t) return;
+    const sts = DATA.salesStates.filter(s => DATA.sales[s].annual > 0);
+    t.innerHTML = `<thead>
+      <tr><th class="left" rowspan="2">State</th><th colspan="13">2026 (editable)</th><th colspan="13">2027 (computed)</th></tr>
+      <tr>${MOS.map(m => `<th>${m}</th>`).join('')}<th>Total</th>${MOS.map(m => `<th>${m}</th>`).join('')}<th>Total</th></tr>
+      </thead><tbody>` +
+      sts.map(s => {
+        const b = base26For(s);
+        return `<tr><td class="left">${s}</td>` +
+          b.map((v, i) => `<td><input type="number" data-st="${s}" data-i="${i}" value="${Math.round(v)}" style="width:74px"></td>`).join('') +
+          `<td data-tot26="${s}">—</td>` +
+          MOS.map((m, i) => `<td data-st27="${s}" data-i="${i}">—</td>`).join('') +
+          `<td data-tot27="${s}">—</td></tr>`;
+      }).join('') + '</tbody>';
+    t.querySelectorAll('input[data-st]').forEach(inp => inp.onchange = () => {
+      ensureCustomBaseline();
+      S.baseline2026[inp.dataset.st][+inp.dataset.i] = +inp.value || 0;
+      const status = document.getElementById('baselineStatus');
+      if (status) status.textContent = 'Using a custom uploaded/edited baseline (the 2026 total scale slider is disabled).';
+      commit();
+    });
+    refreshBaseline2027();
+  }
+
+  // Update only the computed 2027 cells + totals (cheap; called every recompute).
+  function refreshBaseline2027() {
+    const t = document.getElementById('baselineTable');
+    if (!t || !t.querySelector('tbody')) return;
+    const sts = DATA.salesStates.filter(s => DATA.sales[s].annual > 0);
+    const sum = a => a.reduce((p, c) => p + c, 0);
+    for (const s of sts) {
+      const b = base26For(s), e = est27For(s);
+      const c26 = t.querySelector(`[data-tot26="${s}"]`); if (c26) c26.textContent = F.moneyShort(sum(b));
+      const c27 = t.querySelector(`[data-tot27="${s}"]`); if (c27) c27.textContent = F.moneyShort(sum(e));
+      e.forEach((v, i) => { const td = t.querySelector(`[data-st27="${s}"][data-i="${i}"]`); if (td) td.textContent = F.moneyShort(v); });
+    }
+  }
+
+  // ---------- Monte Carlo tab ----------
+  let MC_TRIALS = [];
+  function buildMonteCarlo() {
+    const i = document.getElementById('mcImpact'), d = document.getElementById('mcDelay'),
+          tr = document.getElementById('mcTrials');
+    i.oninput = () => { S.mc.impactSd = +i.value; document.getElementById('mcImpactVal').textContent = F.pct0(S.mc.impactSd); saveState(); };
+    d.oninput = () => { S.mc.delaySd = +d.value; document.getElementById('mcDelayVal').textContent = S.mc.delaySd + ' mo'; saveState(); };
+    tr.onchange = () => { S.mc.trials = +tr.value; saveState(); };
+    document.getElementById('runMC').onclick = runMC;
+    document.getElementById('dlMC').onclick = () => {
+      if (!MC_TRIALS.length) { alert('Run a simulation first.'); return; }
+      downloadCSV('wellabe_montecarlo_trials.csv',
+        [['Trial', 'Total2027Sales'], ...MC_TRIALS.map((v, k) => [k + 1, Math.round(v)])]);
+    };
+    i.value = S.mc.impactSd; d.value = S.mc.delaySd; tr.value = String(S.mc.trials);
+    document.getElementById('mcImpactVal').textContent = F.pct0(S.mc.impactSd);
+    document.getElementById('mcDelayVal').textContent = S.mc.delaySd + ' mo';
+  }
+
+  function runMC() {
+    const m = MODEL, sts = DATA.salesStates.filter(s => DATA.sales[s].annual > 0);
+    // precompute per-state arrays from the deterministic model
+    const pre = sts.map(s => {
+      const x = m.sales[s];
+      return { est: x.months, cr: x.countRed, up: x.uplift, af: x.affFrom };
+    });
+    const N = S.mc.trials, sd = S.mc.impactSd, dsd = S.mc.delaySd;
+    const totals = new Array(N);
+    for (let t = 0; t < N; t++) {
+      const g = 1 + sd * randn();
+      const delay = Math.round(dsd * randn());
+      let tot = 0;
+      for (const p of pre) {
+        const cr = clamp01(p.cr * g);
+        const af = p.af >= 99 ? 99 : p.af + delay;
+        const est = p.est;
+        for (let i = 0; i < 12; i++) {
+          const a = (i + 1) >= af ? 1 : 0;
+          tot += est[i] * (1 - cr * a) * (1 + p.up * a);
+        }
+      }
+      totals[t] = tot;
+    }
+    MC_TRIALS = totals;
+    const sorted = [...totals].sort((a, b) => a - b);
+    const pct = q => sorted[Math.min(N - 1, Math.floor(q * N))];
+    const mean = totals.reduce((a, b) => a + b, 0) / N;
+    const variance = totals.reduce((a, b) => a + (b - mean) * (b - mean), 0) / N;
+    const std = Math.sqrt(variance);
+    const base = m.adj2027;
+    const worse = totals.filter(v => v < base).length / N;
+
+    document.getElementById('mcKpis').innerHTML = [
+      kpi('Base case (deterministic)', F.moneyShort(base), '2027 adjusted'),
+      kpi('Mean', F.moneyShort(mean), `σ ${F.moneyShort(std)}`),
+      kpi('P5 — P95', F.moneyShort(pct(0.05)) + ' — ' + F.moneyShort(pct(0.95)), '90% interval'),
+      kpi('Median (P50)', F.moneyShort(pct(0.50)), ''),
+      kpi('P(below base case)', F.pct0(worse), `${N.toLocaleString()} trials`, worse > 0.5 ? 'bad' : 'good'),
+    ].join('');
+
+    // histogram
+    const lo = sorted[0], hi = sorted[N - 1], bins = 30, w = (hi - lo) / bins || 1;
+    const counts = new Array(bins).fill(0), centers = new Array(bins);
+    for (let b = 0; b < bins; b++) centers[b] = lo + (b + 0.5) * w;
+    totals.forEach(v => { let b = Math.floor((v - lo) / w); if (b >= bins) b = bins - 1; if (b < 0) b = 0; counts[b]++; });
+    Charts.histogram('chartMC', centers.map(c => F.moneyShort(c)), counts, (base - lo) / w);
   }
 
   function commit() { saveState(); renderAll(); }

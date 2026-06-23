@@ -43,17 +43,26 @@ sales2027(state) = baseline2026(state) × (1 + growth) × (1 − countReduction)
 sales2027(state) = baseline2026(state) × (1 + growth) × (1 − reduction)
 ```
 
-Default count-reduction tiers: 5–10%→5%, 10–15%→20%, 15–20%→35%, 20–30%→50%, 30–40%→65%, >40%→80%
+Default count-reduction tiers: 5–10%→5%, 10–15%→15%, 15–20%→30%, 20–30%→40%, 30–40%→60%, >40%→70%
 (growth default 0%). The reduction (and premium uplift) apply only to **2027 months on/after each state's
-rate-increase start date**, weighted by the seasonal monthly shape. A separate per-state **commission-cut**
-factor (default IN −50%) reduces 2027 volume across the whole year.
+rate-increase start date**, weighted by the seasonal monthly shape.
+
+**Baseline is established before the rerate layer.** Per state: `2027 = 2026 × (1+growth)`, then **baseline
+adjustments** (period reductions, e.g. IN −50% — the commission cut) are applied; the rerate plan is layered
+on top of that established baseline. On the **Baseline** tab you can download a CSV template, upload your own
+12-month-by-state 2026 projection, edit any cell, set the runrate growth, and manage the adjustment rules; the
+24-column table shows 2026 (input) and 2027 (computed).
 
 **Default plan:** only the **top 10 states we are furthest below the Big 6** take the increase (start **4/1/2027**);
-all others are off. MD and CA are on but start **10/1**. IN carries a 50% commission cut. Every state has a
-take/skip toggle, start date, count-reduction override, and commission-cut input — all editable.
+all others off; MD and CA on but start **10/1**; IN baseline-adjusted −50%.
 
-**Exports:** the Executive Summary table and a **monthly-by-state matrix for 2026 & 2027** each export to CSV
-(Excel-ready) via their ⬇ buttons.
+**Monte Carlo** tab: stochastic stress test — a market-wide impact factor ~ Normal(1, σ) scales every state's
+reduction, and a correlated launch-delay ~ Normal(0, σ) months shifts all start dates. Reports P5/P50/P95,
+mean, σ, and P(below base case) over N trials, with a histogram and trial-level CSV export.
+
+**Save / share:** export the entire model (all assumptions) as JSON — or just the start dates as CSV — and
+import them back to reproduce a scenario. The Executive Summary table and the monthly-by-state matrix also
+export to CSV.
 
 ## Data sources
 

@@ -19,6 +19,8 @@
   <button data-tab="rates">Rate Competitiveness</button>
   <button data-tab="increases">Required Rate Increases</button>
   <button data-tab="sales">2027 Sales Projection</button>
+  <button data-tab="baseline">Baseline</button>
+  <button data-tab="montecarlo">Monte Carlo</button>
   <button data-tab="inputs">Assumptions &amp; Inputs</button>
 </nav>
 
@@ -41,8 +43,15 @@
     </div>
     <div class="panel">
       <h3>2027 baseline vs. adjusted sales by state</h3>
-      <div class="hint">Baseline = 2026 projection carried into 2027. Adjusted = after the full plan.</div>
+      <div class="hint">Baseline = established 2027 (2026 &times; growth &amp; baseline adjustments). Adjusted = after the rerate plan.</div>
       <div class="chart-wrap tall"><canvas id="chartSummarySales"></canvas></div>
+    </div>
+    <div class="panel">
+      <h3>Monthly by state &mdash; 2026 &amp; 2027
+        <button class="btn secondary" id="dlMonthly" style="float:right">⬇ Export to Excel (CSV)</button></h3>
+      <div class="hint">2026 = baseline projection by month. 2027 = final adjusted (baseline adjustments + rate-driven
+        count change &amp; premium uplift, timed by start date).</div>
+      <div class="table-scroll"><table class="data" id="monthlyTable"></table></div>
     </div>
   </section>
 
@@ -123,12 +132,64 @@
       <h3>State detail</h3>
       <div class="table-scroll"><table class="data" id="salesTable"></table></div>
     </div>
+  </section>
+
+  <!-- ===================== BASELINE ===================== -->
+  <section class="tabpane" id="tab-baseline">
+    <h2 class="section">Baseline &mdash; underlying 2026 &amp; 2027 sales</h2>
+    <p class="lead">The baseline is established <em>before</em> the rerate model. Upload your own 2026 monthly sales
+      by state (or edit the cells), set the 2027 runrate growth, and layer in period reductions (e.g. a commission
+      cut). 2027 = 2026 &times; (1 + growth), then baseline adjustments. The rerate plan is applied on top of this.</p>
     <div class="panel">
-      <h3>Monthly by state &mdash; 2026 &amp; 2027
-        <button class="btn secondary" id="dlMonthly" style="float:right">⬇ Export to Excel (CSV)</button></h3>
-      <div class="hint">2026 = baseline projection by month. 2027 = adjusted (commission cuts + rate-driven count change
-        &amp; premium uplift, applied to months on/after each state's start date).</div>
-      <div class="table-scroll"><table class="data" id="monthlyTable"></table></div>
+      <h3>Import / template</h3>
+      <div class="controls">
+        <div class="field"><label>Download a CSV template (prefilled with current data)</label>
+          <button class="btn secondary" id="dlTemplate">⬇ Download template</button></div>
+        <div class="field"><label>Upload 2026 monthly CSV (State, Jan…Dec)</label>
+          <input type="file" id="upBaseline" accept=".csv" /></div>
+        <div class="field"><label>&nbsp;</label><button class="btn secondary" id="resetBaseline">Reset to default data</button></div>
+        <div class="field"><label>2027 runrate growth</label>
+          <input type="range" id="inGrowth2" min="-0.10" max="0.15" step="0.01" /><span class="rangeval" id="inGrowth2Val"></span></div>
+      </div>
+      <div class="hint" id="baselineStatus"></div>
+    </div>
+    <div class="panel">
+      <h3>Baseline adjustments (period reductions)</h3>
+      <div class="hint">Reduce a state's sales by a % for a month range (e.g. IN &minus;50% Jan&ndash;Apr). Applied to the
+        2027 baseline before the rerate plan.</div>
+      <table class="elastic" id="baselineAdjTable"></table>
+      <div style="margin-top:12px"><button class="btn secondary" id="addBaselineAdj">+ Add adjustment</button></div>
+    </div>
+    <div class="panel">
+      <h3>Editable baseline &mdash; 2026 (input) &amp; 2027 (computed)</h3>
+      <div class="hint">Edit any 2026 month; 2027 = 2026 &times; (1 + growth) with adjustments applied. Totals at right.</div>
+      <div class="table-scroll" style="max-height:640px"><table class="data" id="baselineTable"></table></div>
+    </div>
+  </section>
+
+  <!-- ===================== MONTE CARLO ===================== -->
+  <section class="tabpane" id="tab-montecarlo">
+    <h2 class="section">Monte Carlo &mdash; stochastic stress test</h2>
+    <p class="lead">Run many trials to see the distribution of 2027 sales when the rate-change impact is uncertain
+      and launches slip. Impact draws a market-wide factor ~ Normal(1, &sigma;) on every state's reduction;
+      launch delay draws a correlated shift ~ Normal(0, &sigma;) months applied to <em>all</em> start dates.</p>
+    <div class="panel">
+      <div class="controls">
+        <div class="field"><label>Impact &sigma; (on reductions)</label>
+          <input type="range" id="mcImpact" min="0" max="0.6" step="0.05" /><span class="rangeval" id="mcImpactVal"></span></div>
+        <div class="field"><label>Launch delay &sigma; (months)</label>
+          <input type="range" id="mcDelay" min="0" max="4" step="0.5" /><span class="rangeval" id="mcDelayVal"></span></div>
+        <div class="field"><label>Trials</label>
+          <select id="mcTrials"><option>1000</option><option>2000</option><option>5000</option><option>10000</option></select></div>
+        <div class="field"><label>&nbsp;</label><button class="btn" id="runMC">Run simulation</button></div>
+        <div class="field"><label>&nbsp;</label><button class="btn secondary" id="dlMC">⬇ Export trials (CSV)</button></div>
+      </div>
+    </div>
+    <div class="kpis" id="mcKpis"></div>
+    <div class="panel">
+      <h3>Distribution of total 2027 sales</h3>
+      <div class="hint">Histogram across trials. Dashed line = deterministic base case.</div>
+      <div class="chart-wrap tall"><canvas id="chartMC"></canvas></div>
     </div>
   </section>
 
@@ -181,6 +242,17 @@
         <div class="hint">A required increase of at least the threshold cuts that state's <span id="elasticWhat2">policy count</span> by the reduction. Editable.</div>
         <table class="elastic" id="elasticTable"></table>
         <div style="margin-top:12px"><button class="btn secondary" id="addTier">+ Add tier</button></div>
+      </div>
+    </div>
+    <div class="panel">
+      <h3>Save / share this model</h3>
+      <div class="hint">Export the entire model (every assumption) as JSON so someone else can reproduce it, or just the
+        per-state start dates. Importing replaces the matching settings and recalculates.</div>
+      <div class="controls">
+        <div class="field"><label>Whole model</label><button class="btn secondary" id="exportModel">⬇ Export model JSON</button></div>
+        <div class="field"><label>Import model JSON</label><input type="file" id="importModel" accept=".json" /></div>
+        <div class="field"><label>Start dates</label><button class="btn secondary" id="exportDates">⬇ Export start dates CSV</button></div>
+        <div class="field"><label>Import start dates CSV</label><input type="file" id="importDates" accept=".csv" /></div>
       </div>
     </div>
     <div class="panel">

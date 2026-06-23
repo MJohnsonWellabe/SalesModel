@@ -127,6 +127,31 @@ const Charts = (() => {
       });
     },
 
+    // Monte Carlo histogram with a dashed base-case marker (baseBin = fractional bin index)
+    histogram(id, labels, counts, baseBin) {
+      return upsert(id, {
+        type: 'bar',
+        data: { labels, datasets: [{ label: 'Trials', data: counts, backgroundColor: COL.adj, borderRadius: 2, barPercentage: 1, categoryPercentage: 1 }] },
+        options: {
+          maintainAspectRatio: false, responsive: true,
+          plugins: { legend: { display: false }, tooltip: { callbacks: { title: c => c[0].label, label: c => c.parsed.y + ' trials' } } },
+          scales: { x: { ...gridX, ticks: { ...gridX.ticks, maxTicksLimit: 12, autoSkip: true } }, y: { ...gridY, title: { display: true, text: 'trials', color: COL.tick } } },
+        },
+        plugins: [{
+          id: 'baseMarker',
+          afterDraw(chart) {
+            if (baseBin == null || baseBin < 0) return;
+            const { ctx, chartArea: { top, bottom }, scales: { x } } = chart;
+            const px = x.left + (baseBin + 0.5) / (chart.data.labels.length) * (x.right - x.left);
+            ctx.save(); ctx.strokeStyle = COL.warn || '#ffb454'; ctx.lineWidth = 1.5; ctx.setLineDash([6, 4]);
+            ctx.beginPath(); ctx.moveTo(px, top); ctx.lineTo(px, bottom); ctx.stroke();
+            ctx.setLineDash([]); ctx.fillStyle = COL.warn || '#ffb454'; ctx.font = '11px sans-serif';
+            ctx.fillText('base case', px + 4, top + 12); ctx.restore();
+          },
+        }],
+      });
+    },
+
     monthly(id, monthLabels, baseline, adjusted) {
       return upsert(id, {
         type: 'line',
