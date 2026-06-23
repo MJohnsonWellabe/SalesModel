@@ -15,18 +15,17 @@
 </header>
 
 <nav class="tabs" id="tabs">
-  <button data-tab="summary" class="active">Executive Summary</button>
-  <button data-tab="rates">Rate Competitiveness</button>
+  <button data-tab="inputs" class="active">Assumptions &amp; Inputs</button>
+  <button data-tab="summary">Executive Summary</button>
   <button data-tab="increases">Required Rate Increases</button>
   <button data-tab="sales">2027 Sales Projection</button>
-  <button data-tab="baseline">Baseline</button>
   <button data-tab="montecarlo">Monte Carlo</button>
-  <button data-tab="inputs">Assumptions &amp; Inputs</button>
+  <button data-tab="rates">Rate Competitiveness</button>
 </nav>
 
 <main>
   <!-- ===================== SUMMARY ===================== -->
-  <section class="tabpane active" id="tab-summary">
+  <section class="tabpane" id="tab-summary">
     <h2 class="section">Executive Summary</h2>
     <p class="lead">
       The Big&nbsp;6 carriers are assumed to take a <strong id="sumRerate">15%</strong> rerate over the next 6&ndash;9 months.
@@ -112,7 +111,7 @@
     </div>
     <div class="kpis" id="salesKpis"></div>
     <div class="panel">
-      <h3>Annual: baseline vs. adjusted 2027 by state</h3>
+      <h3>Annual: 2026, 2027 baseline &amp; 2027 adjusted by state</h3>
       <div class="chart-wrap tall"><canvas id="chartSalesByState"></canvas></div>
     </div>
     <div class="grid2">
@@ -135,38 +134,6 @@
   </section>
 
   <!-- ===================== BASELINE ===================== -->
-  <section class="tabpane" id="tab-baseline">
-    <h2 class="section">Baseline &mdash; underlying 2026 &amp; 2027 sales</h2>
-    <p class="lead">The baseline is established <em>before</em> the rerate model. Upload your own 2026 monthly sales
-      by state (or edit the cells), set the 2027 runrate growth, and layer in period reductions (e.g. a commission
-      cut). 2027 = 2026 &times; (1 + growth), then baseline adjustments. The rerate plan is applied on top of this.</p>
-    <div class="panel">
-      <h3>Import / template</h3>
-      <div class="controls">
-        <div class="field"><label>Download a CSV template (prefilled with current data)</label>
-          <button class="btn secondary" id="dlTemplate">⬇ Download template</button></div>
-        <div class="field"><label>Upload 2026 monthly CSV (State, Jan…Dec)</label>
-          <input type="file" id="upBaseline" accept=".csv" /></div>
-        <div class="field"><label>&nbsp;</label><button class="btn secondary" id="resetBaseline">Reset to default data</button></div>
-        <div class="field"><label>2027 runrate growth</label>
-          <input type="range" id="inGrowth2" min="-0.10" max="0.15" step="0.01" /><span class="rangeval" id="inGrowth2Val"></span></div>
-      </div>
-      <div class="hint" id="baselineStatus"></div>
-    </div>
-    <div class="panel">
-      <h3>Baseline adjustments (period reductions)</h3>
-      <div class="hint">Reduce a state's sales by a % for a month range (e.g. IN &minus;50% Jan&ndash;Apr). Applied to the
-        2027 baseline before the rerate plan.</div>
-      <table class="elastic" id="baselineAdjTable"></table>
-      <div style="margin-top:12px"><button class="btn secondary" id="addBaselineAdj">+ Add adjustment</button></div>
-    </div>
-    <div class="panel">
-      <h3>Editable baseline &mdash; 2026 (input) &amp; 2027 (computed)</h3>
-      <div class="hint">Edit any 2026 month; 2027 = 2026 &times; (1 + growth) with adjustments applied. Totals at right.</div>
-      <div class="table-scroll" style="max-height:640px"><table class="data" id="baselineTable"></table></div>
-    </div>
-  </section>
-
   <!-- ===================== MONTE CARLO ===================== -->
   <section class="tabpane" id="tab-montecarlo">
     <h2 class="section">Monte Carlo &mdash; stochastic stress test</h2>
@@ -194,9 +161,41 @@
   </section>
 
   <!-- ===================== INPUTS ===================== -->
-  <section class="tabpane" id="tab-inputs">
+  <section class="tabpane active" id="tab-inputs">
     <h2 class="section">Assumptions &amp; Inputs</h2>
-    <p class="lead">Everything below recalculates the whole app instantly. Settings persist in your browser.</p>
+    <p class="lead">Set the baseline first, then the rate assumptions. Everything recalculates instantly and
+      persists in your browser. The 2027 baseline is established (2026 &times; (1 + growth), then any baseline
+      adjustments) <em>before</em> the rerate plan is layered on top.</p>
+
+    <h3 class="section" style="font-size:14px;margin:6px 0 10px;color:var(--accent)">1 &middot; Baseline &mdash; import &amp; growth</h3>
+    <div class="panel">
+      <div class="controls">
+        <div class="field"><label>Download a CSV template (prefilled with current data)</label>
+          <button class="btn secondary" id="dlTemplate">⬇ Download template</button></div>
+        <div class="field"><label>Upload 2026 monthly CSV (State, Jan…Dec)</label>
+          <input type="file" id="upBaseline" accept=".csv" /></div>
+        <div class="field"><label>&nbsp;</label><button class="btn secondary" id="resetBaseline">Reset to default data</button></div>
+        <div class="field"><label>2027 runrate growth</label>
+          <input type="range" id="inGrowth2" min="-0.10" max="0.15" step="0.01" /><span class="rangeval" id="inGrowth2Val"></span></div>
+      </div>
+      <div class="hint" id="baselineStatus"></div>
+    </div>
+    <div class="panel">
+      <h3>Baseline adjustments (period reductions)</h3>
+      <div class="hint">Reduce a state's sales by a % for a month range (e.g. IN &minus;50% Jan&ndash;Apr). Applied to the
+        2027 baseline before the rerate plan.</div>
+      <table class="elastic" id="baselineAdjTable"></table>
+      <div style="margin-top:12px"><button class="btn secondary" id="addBaselineAdj">+ Add adjustment</button></div>
+    </div>
+    <div class="panel">
+      <h3>Edit the baseline</h3>
+      <div class="hint">Full-year 2026 &amp; 2027 totals, then each month's share of the year, then the monthly
+        dollars. Edit a 2026 total (scales its months) or any 2026 monthly amount; 2027 = 2026 &times; (1 + growth)
+        with adjustments. State column is frozen; bottom row totals all states.</div>
+      <div class="table-scroll" style="max-height:560px"><table class="data freeze" id="baselineTable"></table></div>
+    </div>
+
+    <h3 class="section" style="font-size:14px;margin:22px 0 10px;color:var(--accent)">2 &middot; Rate assumptions</h3>
     <div class="grid2">
       <div class="panel">
         <h3>Rate targeting</h3>
@@ -223,11 +222,6 @@
       </div>
       <div class="panel">
         <h3>Sales projection</h3>
-        <div class="field" style="margin-bottom:16px">
-          <label>2027 growth from 2026 baseline</label>
-          <input type="range" id="inGrowth" min="-0.10" max="0.15" step="0.01" />
-          <span class="rangeval" id="inGrowthVal"></span>
-        </div>
         <div class="field" style="margin-bottom:14px">
           <label>What the elasticity reduces</label>
           <select id="inReductionMode">

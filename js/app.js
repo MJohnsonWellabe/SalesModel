@@ -2,7 +2,7 @@
 (() => {
   'use strict';
 
-  const LS_KEY = 'wellabe_rate_model_v4'; // bumped: baseline adjustments, lower elasticity, MC
+  const LS_KEY = 'wellabe_rate_model_v5'; // bumped: no IN default adj, inputs-first layout
   const DEFAULTS = {
     rerate: 0.15,        // Big 6 rerate before we act
     benchStat: 'avg',    // avg | median | min  (over the six Big-6 group rates)
@@ -14,8 +14,8 @@
     stateOn: {},         // state -> bool; absent => true (take the increase)
     stateStart: {},      // state -> 'YYYY-MM-DD'; absent => defaultStart
     // Baseline adjustments establish the 2027 baseline BEFORE the rerate layer:
-    // reduce a state's sales by `red` for months m0..m1 (1-12). Default: IN commission cut.
-    baselineAdj: [{ state: 'IN', red: 0.5, m0: 1, m1: 12 }],
+    // reduce a state's sales by `red` for months m0..m1 (1-12).
+    baselineAdj: [],
     reductionMode: 'count', // 'count' = elasticity cuts policy COUNT, premium/policy rises
                             //   with the rate increase; 'premium' = cuts premium dollars directly
     elastic: [           // {t: required-increase threshold, r: policy-count reduction}
@@ -502,7 +502,8 @@
     const sts = [...DATA.salesStates].filter(s => DATA.sales[s].annual > 0)
       .sort((a, b) => m.sales[b].baseline2027 - m.sales[a].baseline2027);
     Charts.salesByState('chartSalesByState', sts,
-      sts.map(s => m.sales[s].baseline2027), sts.map(s => m.sales[s].adjusted2027), { horizontal: false });
+      sts.map(s => m.sales[s].baseline2027), sts.map(s => m.sales[s].adjusted2027),
+      { horizontal: false, s2026: sts.map(s => m.sales[s].baseline2026) });
 
     // waterfall: baseline -> each state's net premium delta (loss down / gain up) -> adjusted
     const impactSorted = sts.filter(s => Math.abs(m.sales[s].loss) > 1)
@@ -604,14 +605,12 @@
   function buildInputs() {
     const r = document.getElementById('inRerate');
     const o = document.getElementById('inOffset');
-    const g = document.getElementById('inGrowth');
     const bs = document.getElementById('inBenchStat');
     const bl = document.getElementById('inBaseline');
     bl.min = Math.round(DATA.baselineTotal * 0.6);
     bl.max = Math.round(DATA.baselineTotal * 1.4);
     r.oninput = () => { S.rerate = +r.value; commit(); };
     o.oninput = () => { S.offset = +o.value; commit(); };
-    g.oninput = () => { S.growth = +g.value; commit(); };
     bs.onchange = () => { S.benchStat = bs.value; commit(); };
     bl.oninput = () => { S.baselineTotal = +bl.value; commit(); };
     const rm = document.getElementById('inReductionMode');
@@ -728,8 +727,6 @@
     document.getElementById('inOffset').value = S.offset;
     document.getElementById('inOffsetVal').textContent =
       S.offset === 0 ? 'match benchmark' : `${F.signpct(S.offset)} vs benchmark`;
-    document.getElementById('inGrowth').value = S.growth;
-    document.getElementById('inGrowthVal').textContent = F.signpct(S.growth);
     document.getElementById('inBenchStat').value = S.benchStat;
     const baseTot = S.baselineTotal || DATA.baselineTotal;
     document.getElementById('inBaseline').value = baseTot;
@@ -834,45 +831,95 @@
     function sts0() { return DATA.salesStates[0]; }
   }
 
-  // 24-col editable baseline table (2026 inputs + computed 2027); built on load/upload/reset.
+  // Editable baseline: totals, monthly ratios, then 2026 (input) & 2027 (computed) amounts.
+  // Frozen State column + a totals row. Cell refs cached for fast refresh.
+  let BL_CELLS = null;
+  const sumArr = a => a.reduce((p, c) => p + c, 0);
+  function blStatusCustom() {
+    const st = document.getElementById('baselineStatus');
+    if (st) st.textContent = 'Using a custom uploaded/edited baseline (the 2026 total scale slider is disabled).';
+  }
   function buildBaselineTable() {
     const t = document.getElementById('baselineTable');
     if (!t) return;
     const sts = DATA.salesStates.filter(s => DATA.sales[s].annual > 0);
+    const monthHdr = MOS.map(m => `<th>${m}</th>`).join('');
     t.innerHTML = `<thead>
-      <tr><th class="left" rowspan="2">State</th><th colspan="13">2026 (editable)</th><th colspan="13">2027 (computed)</th></tr>
-      <tr>${MOS.map(m => `<th>${m}</th>`).join('')}<th>Total</th>${MOS.map(m => `<th>${m}</th>`).join('')}<th>Total</th></tr>
-      </thead><tbody>` +
-      sts.map(s => {
-        const b = base26For(s);
-        return `<tr><td class="left">${s}</td>` +
-          b.map((v, i) => `<td><input type="number" data-st="${s}" data-i="${i}" value="${Math.round(v)}" style="width:74px"></td>`).join('') +
-          `<td data-tot26="${s}">—</td>` +
-          MOS.map((m, i) => `<td data-st27="${s}" data-i="${i}">—</td>`).join('') +
-          `<td data-tot27="${s}">—</td></tr>`;
-      }).join('') + '</tbody>';
-    t.querySelectorAll('input[data-st]').forEach(inp => inp.onchange = () => {
+      <tr><th class="left" rowspan="2">State</th><th rowspan="2">2026<br>total</th><th rowspan="2">2027<br>total</th>
+        <th colspan="12">Monthly share %</th><th colspan="12">2026 monthly $</th><th colspan="12">2027 monthly $</th></tr>
+      <tr>${monthHdr}${monthHdr}${monthHdr}</tr></thead><tbody>` +
+      sts.map(s => `<tr data-row="${s}"><td class="left">${s}</td>
+        <td><input type="number" data-st="${s}" data-f="tot" value="0" style="width:84px"></td>
+        <td data-c="tot27">—</td>
+        ${MOS.map((m, i) => `<td data-c="ratio" data-i="${i}" class="muted">—</td>`).join('')}
+        ${MOS.map((m, i) => `<td><input type="number" data-st="${s}" data-i="${i}" value="0" style="width:72px"></td>`).join('')}
+        ${MOS.map((m, i) => `<td data-c="amt27" data-i="${i}">—</td>`).join('')}
+      </tr>`).join('') +
+      `<tr data-row="__total" style="font-weight:700"><td class="left">TOTAL</td>
+        <td data-c="ttot26">—</td><td data-c="ttot27">—</td>
+        ${MOS.map((m, i) => `<td data-c="tratio" data-i="${i}" class="muted">—</td>`).join('')}
+        ${MOS.map((m, i) => `<td data-c="tamt26" data-i="${i}">—</td>`).join('')}
+        ${MOS.map((m, i) => `<td data-c="tamt27" data-i="${i}">—</td>`).join('')}
+      </tr></tbody>`;
+
+    // cache refs
+    BL_CELLS = { rows: {}, total: {} };
+    for (const s of sts) {
+      const tr = t.querySelector(`tr[data-row="${s}"]`);
+      BL_CELLS.rows[s] = {
+        totIn: tr.querySelector('input[data-f="tot"]'),
+        tot27: tr.querySelector('[data-c="tot27"]'),
+        ratio: [...tr.querySelectorAll('[data-c="ratio"]')],
+        amt26: [...tr.querySelectorAll('input[data-i]')],
+        amt27: [...tr.querySelectorAll('[data-c="amt27"]')],
+      };
+    }
+    const tr = t.querySelector('tr[data-row="__total"]');
+    BL_CELLS.total = {
+      tot26: tr.querySelector('[data-c="ttot26"]'), tot27: tr.querySelector('[data-c="ttot27"]'),
+      ratio: [...tr.querySelectorAll('[data-c="tratio"]')],
+      amt26: [...tr.querySelectorAll('[data-c="tamt26"]')], amt27: [...tr.querySelectorAll('[data-c="tamt27"]')],
+    };
+
+    // seed the editable 2026 inputs with current values
+    for (const s of sts) { const b = base26For(s); BL_CELLS.rows[s].amt26.forEach((el, i) => el.value = Math.round(b[i])); }
+
+    // editable 2026 monthly amounts
+    t.querySelectorAll('input[data-i]').forEach(inp => inp.onchange = () => {
       ensureCustomBaseline();
       S.baseline2026[inp.dataset.st][+inp.dataset.i] = +inp.value || 0;
-      const status = document.getElementById('baselineStatus');
-      if (status) status.textContent = 'Using a custom uploaded/edited baseline (the 2026 total scale slider is disabled).';
-      commit();
+      blStatusCustom(); commit();
+    });
+    // editable 2026 total -> scale the state's months proportionally
+    t.querySelectorAll('input[data-f="tot"]').forEach(inp => inp.onchange = () => {
+      ensureCustomBaseline();
+      const s = inp.dataset.st, target = +inp.value || 0;
+      const cur = S.baseline2026[s], old = sumArr(cur);
+      if (old > 0) cur.forEach((v, i) => cur[i] = v * target / old);
+      else cur.forEach((_, i) => cur[i] = target / 12);
+      BL_CELLS.rows[s].amt26.forEach((el, i) => el.value = Math.round(cur[i]));
+      blStatusCustom(); commit();
     });
     refreshBaseline2027();
   }
 
-  // Update only the computed 2027 cells + totals (cheap; called every recompute).
+  // Update totals, ratios and the computed 2027 amounts (cheap; called every recompute).
   function refreshBaseline2027() {
-    const t = document.getElementById('baselineTable');
-    if (!t || !t.querySelector('tbody')) return;
-    const sts = DATA.salesStates.filter(s => DATA.sales[s].annual > 0);
-    const sum = a => a.reduce((p, c) => p + c, 0);
+    if (!BL_CELLS) return;
+    const sts = Object.keys(BL_CELLS.rows);
+    const tot26 = Array(12).fill(0), tot27 = Array(12).fill(0);
     for (const s of sts) {
-      const b = base26For(s), e = est27For(s);
-      const c26 = t.querySelector(`[data-tot26="${s}"]`); if (c26) c26.textContent = F.moneyShort(sum(b));
-      const c27 = t.querySelector(`[data-tot27="${s}"]`); if (c27) c27.textContent = F.moneyShort(sum(e));
-      e.forEach((v, i) => { const td = t.querySelector(`[data-st27="${s}"][data-i="${i}"]`); if (td) td.textContent = F.moneyShort(v); });
+      const r = BL_CELLS.rows[s], b = base26For(s), e = est27For(s);
+      const s26 = sumArr(b), s27 = sumArr(e);
+      if (document.activeElement !== r.totIn) r.totIn.value = Math.round(s26);
+      r.tot27.textContent = F.moneyShort(s27);
+      b.forEach((v, i) => { r.ratio[i].textContent = s26 ? (v / s26 * 100).toFixed(1) + '%' : '—'; tot26[i] += v; });
+      e.forEach((v, i) => { r.amt27[i].textContent = F.moneyShort(v); tot27[i] += v; });
     }
+    const T = BL_CELLS.total, s26 = sumArr(tot26), s27 = sumArr(tot27);
+    T.tot26.textContent = F.moneyShort(s26); T.tot27.textContent = F.moneyShort(s27);
+    tot26.forEach((v, i) => { T.ratio[i].textContent = s26 ? (v / s26 * 100).toFixed(1) + '%' : '—'; T.amt26[i].textContent = F.moneyShort(v); });
+    tot27.forEach((v, i) => T.amt27[i].textContent = F.moneyShort(v));
   }
 
   // ---------- Monte Carlo tab ----------

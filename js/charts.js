@@ -34,17 +34,15 @@ const Charts = (() => {
   return {
     COL, buckets, money, moneyShort, pct,
 
-    // Grouped/stacked sales bars (baseline vs adjusted) — horizontal
+    // Grouped sales bars (optional 2026, 2027 baseline, 2027 adjusted)
     salesByState(id, labels, baseline, adjusted, opts = {}) {
+      const datasets = [];
+      if (opts.s2026) datasets.push({ label: '2026 baseline', data: opts.s2026, backgroundColor: COL.wellabeT || '#7cc6ff', borderRadius: 3 });
+      datasets.push({ label: '2027 baseline', data: baseline, backgroundColor: COL.base, borderRadius: 3 });
+      datasets.push({ label: '2027 adjusted', data: adjusted, backgroundColor: COL.adj, borderRadius: 3 });
       return upsert(id, {
         type: 'bar',
-        data: {
-          labels,
-          datasets: [
-            { label: '2027 baseline', data: baseline, backgroundColor: COL.base, borderRadius: 3 },
-            { label: '2027 adjusted', data: adjusted, backgroundColor: COL.adj, borderRadius: 3 },
-          ],
-        },
+        data: { labels, datasets },
         options: {
           indexAxis: opts.horizontal ? 'y' : 'x',
           maintainAspectRatio: false, responsive: true,

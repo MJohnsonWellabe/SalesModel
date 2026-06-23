@@ -94,6 +94,15 @@ table.data td.neg { color: var(--bad); }
 table.data tr.clickable { cursor: pointer; }
 table.data tr.selected { background: rgba(61,169,252,.12); }
 .table-scroll { max-height: 560px; overflow: auto; border: 1px solid var(--border); border-radius: 10px; }
+/* Frozen first column (state names) for wide baseline table */
+table.data.freeze th:first-child,
+table.data.freeze td:first-child {
+  position: sticky; left: 0; z-index: 3; background: var(--panel);
+  box-shadow: 1px 0 0 var(--border);
+}
+table.data.freeze thead th:first-child { z-index: 5; }
+table.data.freeze tbody tr:hover td:first-child { background: var(--panel-2); }
+table.data.freeze tr[data-row="__total"] td:first-child { background: var(--panel); }
 .bar-cell { position: relative; }
 .bar-cell .bar { position: absolute; left: 0; top: 0; bottom: 0; background: rgba(61,169,252,.18); z-index: 0; }
 .bar-cell span { position: relative; z-index: 1; }

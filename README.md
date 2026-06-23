@@ -48,13 +48,14 @@ Default count-reduction tiers: 5–10%→5%, 10–15%→15%, 15–20%→30%, 20�
 rate-increase start date**, weighted by the seasonal monthly shape.
 
 **Baseline is established before the rerate layer.** Per state: `2027 = 2026 × (1+growth)`, then **baseline
-adjustments** (period reductions, e.g. IN −50% — the commission cut) are applied; the rerate plan is layered
-on top of that established baseline. On the **Baseline** tab you can download a CSV template, upload your own
-12-month-by-state 2026 projection, edit any cell, set the runrate growth, and manage the adjustment rules; the
-24-column table shows 2026 (input) and 2027 (computed).
+adjustments** (period reductions, e.g. IN −50% Jan–Apr) are applied; the rerate plan is layered on top. The
+**Assumptions & Inputs** tab leads with the baseline: download a CSV template, upload your own 12-month-by-state
+2026 projection, set the runrate growth, manage adjustment rules, and edit the baseline table (full-year totals,
+each month's share, then 2026/2027 monthly dollars — frozen State column, totals row; edit a 2026 total to scale
+its months or any monthly cell directly).
 
 **Default plan:** only the **top 10 states we are furthest below the Big 6** take the increase (start **4/1/2027**);
-all others off; MD and CA on but start **10/1**; IN baseline-adjusted −50%.
+all others off; MD and CA on but start **10/1**.
 
 **Monte Carlo** tab: stochastic stress test — a market-wide impact factor ~ Normal(1, σ) scales every state's
 reduction, and a correlated launch-delay ~ Normal(0, σ) months shifts all start dates. Reports P5/P50/P95,
